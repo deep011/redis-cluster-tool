@@ -52,15 +52,19 @@ The command must be covered by double quotation marks, if there were more than o
 
 ## Example
 
-Get the cluster state:
+
+**Get the cluster state:**
+
     $redis_cluster_tool -a 127.0.0.1:34501 -C cluster_state
     node[127.0.0.1:34504] cluster_state is ok 
     node[127.0.0.1:34501] cluster_state is ok 
     node[127.0.0.1:34502] cluster_state is ok 
     node[127.0.0.1:34503] cluster_state is ok 
     all nodes cluster_state is ok
+
     
-Get the cluster used memory:
+**Get the cluster used memory:**
+
     $redis_cluster_tool -a 127.0.0.1:34501 -C cluster_used_memory
     node[127.0.0.1:34504] used 195 M	25%
     node[127.0.0.1:34501] used 195 M	25%
@@ -68,19 +72,26 @@ Get the cluster used memory:
     node[127.0.0.1:34503] used 195 M	25%
     cluster used 780 M
     
-Rebalance the cluster slots:
+
+**Rebalance the cluster slots:**
+
     $redis-cluster-tool -a 127.0.0.1:34501 -C cluster_rebalance
     --from e1a4ba9922555bfc961f987213e3d4e6659c9316 --to 785862477453bc6b91765ffba0b5bc803052d70a --slots 2048
     --from 437c719f50dc9d0745032f3b280ce7ecc40792ac --to cb8299390ce53cefb2352db34976dd768708bf64 --slots 2048
     --from a497fc619d4f6c93bd4afb85f3f8a148a3f35adb --to a0cf6c1f12d295cd80f5811afab713cdc858ea30 --slots 2048
     --from 0bdef694d08cb3daab9aac518d3ad6f8035ec896 --to 471eaf98ff43ba9a0aadd9579f5af1609239c5b7 --slots 2048
+
 Then you can use "redis-trib.rb reshard --yes --from e1a4ba9922555bfc961f987213e3d4e6659c9316 --to 785862477453bc6b91765ffba0b5bc803052d70a --slots 2048 127.0.0.1:34501" to rebalance the cluster slots 
     
-Flushall the cluster:
+
+**Flushall the cluster:**
+
     $redis-cluster-tool -a 127.0.0.1:34501 -C flushall
     OK
 
-Get a config from every node in cluster:
+
+**Get a config from every node in cluster:**
+
     $redis-cluster-tool -a 127.0.0.1:34501 -C "cluster_config_get maxmemory"
     node 127.0.0.1:34501 config maxmemory is 1048576000 (1000MB)
     node 127.0.0.1:34502 config maxmemory is 1048576000 (1000MB)
@@ -90,7 +101,9 @@ Get a config from every node in cluster:
     All nodes config are Consistent
     cluster total maxmemory: 4194304000 (4000MB)
     
-Set a config from every node in cluster:
+
+**Set a config from every node in cluster:**
+
     $redis-cluster-tool -a 127.0.0.1:34501 -C "cluster_config_set maxmemory 10000000"
     OK
 
