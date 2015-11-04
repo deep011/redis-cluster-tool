@@ -14,6 +14,8 @@
 #define RCT_CMD_CLUSTER_DO_COMMAND		"cluster_do_command"
 #define RCT_CMD_CLUSTER_GET_STATE		"cluster_get_state"
 
+#define CMD_FLAG_NEED_CONFIRM 			(1<<0)
+
 struct rctContext;
 
 typedef enum redis_command_type{
@@ -39,6 +41,7 @@ typedef struct RCTCommand {
 	int type;
 	int min_arg_count;
 	int max_arg_count;
+	int flag;
 }RCTCommand;
 
 void rct_show_command_usage(void);

@@ -1437,7 +1437,7 @@ int core_core(rctContext *ctx)
 	di = dictFind(ctx->commands, ctx->cmd);
 	if(di == NULL)
 	{
-		log_stderr("ERR: command [%s] not found.", ctx->cmd);
+		log_stderr("ERR: command [%s] not found, please read the help.", ctx->cmd);
 		return RCT_ERROR;
 	}
 
@@ -1445,6 +1445,33 @@ int core_core(rctContext *ctx)
 	if(command == NULL)
 	{
 		return RCT_ERROR;
+	}
+
+	if(command->flag & CMD_FLAG_NEED_CONFIRM)
+	{
+		log_stderr("Do you really do the %s?", command->name);
+		char confirm_input[5] = {0};
+		int confirm_retry = 0;
+
+		while(strcmp("yes", confirm_input))
+		{
+			if(strcmp("no", confirm_input) == 0)
+			{
+				return RCT_OK;
+			}
+
+			if(confirm_retry > 3)
+			{
+				log_stderr("ERR: Your input is always error!");
+				return RCT_OK;
+			}
+			
+			memset(confirm_input, '\0', 5);
+			
+			log_stderr("please input \"yes\" or \"no\" :");
+			scanf("%s", &confirm_input);
+			confirm_retry ++;
+		}
 	}
 
 	args_num = hiarray_n(&ctx->args);

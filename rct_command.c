@@ -4,25 +4,25 @@
 
 struct RCTCommand rctCommandTable[] = {
 	{RCT_CMD_CLUSTER_STATE, "Show the cluster state.", 
-		nodes_get_state, NODES_CLUSTER_STATE, 0, 0},
+		nodes_get_state, NODES_CLUSTER_STATE, 0, 0, 0},
 	{RCT_CMD_CLUSTER_USED_MEMORY, "Show the cluster used memory.", 
-		nodes_get_state, REDIS_MEMORY, 0, 0},
+		nodes_get_state, REDIS_MEMORY, 0, 0, 0},
 	{RCT_CMD_CLUSTER_KEYS_NUM, "Show the cluster holds keys num.", 
-		nodes_get_state, REDIS_KEY_NUM, 0, 0},
+		nodes_get_state, REDIS_KEY_NUM, 0, 0, 0},
 	{RCT_CMD_SLOTS_STATE, "Show the slots state.", 
-		slots_state, -1, 0, 0},
+		slots_state, -1, 0, 0, 0},
 	{RCT_CMD_NODE_SLOT_NUM, "Show the node hold slots number.", 
-		show_nodes_hold_slot_num, -1, 0, 0},
+		show_nodes_hold_slot_num, -1, 0, 0, 0},
 	{RCT_CMD_NEW_NODES_NAME, "Show the new nodes name that not covered slots.", 
-		show_new_nodes_name, -1, 0, 0},
+		show_new_nodes_name, -1, 0, 0, 0},
 	{RCT_CMD_CLUSTER_REBALANCE, "Show the cluster how to rebalance.", 
-		cluster_rebalance, -1, 0, 0},
+		cluster_rebalance, -1, 0, 0, 0},
 	{RCT_CMD_FLUSHALL, "Flush all the cluster.", 
-		do_command_node_by_node, REDIS_COMMAND_FLUSHALL, 0, 0},
+		do_command_node_by_node, REDIS_COMMAND_FLUSHALL, 0, 0, 1},
 	{RCT_CMD_CLUSTER_CONFIG_GET, "Get config from every node in the cluster and check consistency.", 
-		do_command_node_by_node, REDIS_COMMAND_CONFIG_GET, 1, 1},
+		do_command_node_by_node, REDIS_COMMAND_CONFIG_GET, 1, 1, 0},
 	{RCT_CMD_CLUSTER_CONFIG_SET, "Set config to every node in the cluster.", 
-		do_command_node_by_node, REDIS_COMMAND_CONFIG_SET, 2, 2}
+		do_command_node_by_node, REDIS_COMMAND_CONFIG_SET, 2, 2, 1}
 };
 
 
