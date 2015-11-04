@@ -1,4 +1,3 @@
-
 #ifndef _RCT_CORE_H_
 #define _RCT_CORE_H_
 
@@ -104,5 +103,5 @@ void cluster_rebalance(rctContext *ctx, int type);
 void do_command(rctContext *ctx, int type);
 void do_command_node_by_node(rctContext *ctx, int type);
 
-
 #endif
+

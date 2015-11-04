@@ -847,7 +847,7 @@ void nodes_get_state(rctContext *ctx, int type)
 	redisReply *reply = NULL;
 	int i, nodes_count = 0;
 	struct hiarray *statistics_nodes = NULL;
-	redis_node *statistics_node;
+	redis_node *statistics_node = NULL;
 	int node_keys_num = 0, nodes_keys_num = 0;
 	long long memory_size = 0, memory_size_all = 0;
 	sds cluster_state;
@@ -916,14 +916,13 @@ void nodes_get_state(rctContext *ctx, int type)
 			memory_size_all += statistics_node->used_memory;
 			break;
 		case NODES_CLUSTER_STATE:
+			
 			cluster_state = node_cluster_state(cc, node, 1);
 			if(cluster_state == NULL)
 			{
-				statistics_node->cluster_state = NULL;
+				all_cluster_state_is_ok = 0;
 				continue;
 			}
-			
-			statistics_node->cluster_state = cluster_state;
 			
 			if(strcmp(cluster_state, "ok") != 0)
 			{
@@ -1480,3 +1479,4 @@ done:
 	
 	return RCT_OK;
 }
+

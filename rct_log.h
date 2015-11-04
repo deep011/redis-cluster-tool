@@ -157,3 +157,4 @@ char * set_log_file_count(char *arg);
 
 void log_all(const char *file, int line, size_t data_len, uint8_t *data, const char *fmt, ...);
 #endif
+

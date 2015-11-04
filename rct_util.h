@@ -297,3 +297,4 @@ _rct_strrchr(uint8_t *p, uint8_t *start, uint8_t c)
 }
 
 #endif
+
