@@ -1092,6 +1092,15 @@ void do_command_node_by_node(rctContext *ctx, int type)
 		}
 		
 		break;
+	case REDIS_COMMAND_CONFIG_REWRITE:
+		command = sdsnew("config rewrite");
+		if(command == NULL)
+		{
+			log_stderr("ERR: out of memory.");
+			goto done;
+		}
+		
+		break;
 	default:
 		
 		break;
@@ -1130,7 +1139,8 @@ void do_command_node_by_node(rctContext *ctx, int type)
 				switch(cmd_type)
 				{
 				case REDIS_COMMAND_FLUSHALL:
-				case REDIS_COMMAND_CONFIG_SET:				
+				case REDIS_COMMAND_CONFIG_SET:
+				case REDIS_COMMAND_CONFIG_REWRITE:
 					break;
 				case REDIS_COMMAND_CONFIG_GET:
 					if(reply->type != REDIS_REPLY_ARRAY)
@@ -1245,6 +1255,7 @@ next:
 	{
 	case REDIS_COMMAND_FLUSHALL:
 	case REDIS_COMMAND_CONFIG_SET:
+	case REDIS_COMMAND_CONFIG_REWRITE:
 		if(all_is_ok)
 		{
 			printf("OK\n");

@@ -11,6 +11,7 @@
 #define RCT_CMD_FLUSHALL				"flushall"
 #define RCT_CMD_CLUSTER_CONFIG_GET		"cluster_config_get"
 #define RCT_CMD_CLUSTER_CONFIG_SET		"cluster_config_set"
+#define RCT_CMD_CLUSTER_CONFIG_REWRITE	"cluster_config_rewrite"
 #define RCT_CMD_CLUSTER_DO_COMMAND		"cluster_do_command"
 #define RCT_CMD_CLUSTER_GET_STATE		"cluster_get_state"
 
@@ -22,6 +23,7 @@ typedef enum redis_command_type{
 	REDIS_COMMAND_FLUSHALL,
 	REDIS_COMMAND_CONFIG_GET,
 	REDIS_COMMAND_CONFIG_SET,
+	REDIS_COMMAND_CONFIG_REWRITE,
 	REDIS_COMMAND_GET,
 	REDIS_COMMAND_SET
 } redis_command_type_t;

@@ -22,7 +22,9 @@ struct RCTCommand rctCommandTable[] = {
 	{RCT_CMD_CLUSTER_CONFIG_GET, "Get config from every node in the cluster and check consistency.", 
 		do_command_node_by_node, REDIS_COMMAND_CONFIG_GET, 1, 1, 0},
 	{RCT_CMD_CLUSTER_CONFIG_SET, "Set config to every node in the cluster.", 
-		do_command_node_by_node, REDIS_COMMAND_CONFIG_SET, 2, 2, 1}
+		do_command_node_by_node, REDIS_COMMAND_CONFIG_SET, 2, 2, 1},
+	{RCT_CMD_CLUSTER_CONFIG_REWRITE, "Rewrite every node config to echo node for the cluster.", 
+		do_command_node_by_node, REDIS_COMMAND_CONFIG_REWRITE, 0, 0, 1}
 };
 
 
