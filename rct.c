@@ -97,14 +97,23 @@ init_context(struct instance *nci)
 	}
 
 	free(cmd_parts);
-	/*
-	if(rct_ctx->cmd == NULL)
+
+	if(strcmp(nci->role, RCT_OPTION_REDIS_ROLE_ALL) == 0)
 	{
-		rct_free(rct_ctx);
-		dictRelease(commands);
-		return NULL;
+		rct_ctx->redis_role = RCT_REDIS_ROLE_ALL;
 	}
-	*/
+	else if(strcmp(nci->role, RCT_OPTION_REDIS_ROLE_MASTER) == 0)
+	{
+		rct_ctx->redis_role = RCT_REDIS_ROLE_MASTER;
+	}
+	else if(strcmp(nci->role, RCT_OPTION_REDIS_ROLE_SLAVE) == 0)
+	{
+		rct_ctx->redis_role = RCT_REDIS_ROLE_SLAVE;
+	}
+	else
+	{
+		rct_ctx->redis_role = RCT_REDIS_ROLE_NULL;
+	}
 
 	return rct_ctx;
 }

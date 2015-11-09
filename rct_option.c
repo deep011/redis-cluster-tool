@@ -1,18 +1,21 @@
 #include "rct_core.h"
 
-#define RCT_CONF_PATH        "conf/rct.yml"
+#define RCT_CONF_PATH        	"conf/rct.yml"
 
-#define RCT_LOG_DEFAULT      LOG_NOTICE
-#define RCT_LOG_MIN          LOG_EMERG
-#define RCT_LOG_MAX          LOG_PVERB
-#define RCT_LOG_PATH         NULL
+#define RCT_LOG_DEFAULT      	LOG_NOTICE
+#define RCT_LOG_MIN          	LOG_EMERG
+#define RCT_LOG_MAX          	LOG_PVERB
+#define RCT_LOG_PATH         	NULL
 
-#define RCT_ADDR             "127.0.0.1:6379"
-#define RCT_INTERVAL         1000
+#define RCT_ADDR             	"127.0.0.1:6379"
+#define RCT_INTERVAL         	1000
 
-#define RCT_PID_FILE         NULL
+#define RCT_PID_FILE         	NULL
 
-#define RCT_COMMAND_DEFAULT	 RCT_CMD_CLUSTER_STATE
+#define RCT_COMMAND_DEFAULT	 	RCT_CMD_CLUSTER_STATE
+
+#define RCT_OPTION_REDIS_ROLE_DEFAULT	RCT_OPTION_REDIS_ROLE_ALL
+
 
 static struct option long_options[] = {
     { "help",           no_argument,        NULL,   'h' },
@@ -25,10 +28,11 @@ static struct option long_options[] = {
     { "interval",       required_argument,  NULL,   'i' },
     { "pid-file",       required_argument,  NULL,   'p' },
     { "command",        required_argument,  NULL,   'C' },
+    { "role",        	required_argument,  NULL,   'r' },
     { NULL,             0,                  NULL,    0  }
 };
 
-static char short_options[] = "hVdo:v:c:a:i:p:C:";
+static char short_options[] = "hVdo:v:c:a:i:p:C:r:";
 
 void
 rct_show_usage(void)
@@ -36,7 +40,7 @@ rct_show_usage(void)
     log_stderr(
         "Usage: redis-cluster-tool [-?hVd] [-v verbosity level] [-o output file]" CRLF
         "                  [-c conf file] [-a addr] [-i interval]" CRLF
-        "                  [-p pid file]" CRLF
+        "                  [-p pid file] [-C command] [-r redis role]" CRLF
         "");
     log_stderr(
         "Options:" CRLF
@@ -51,6 +55,7 @@ rct_show_usage(void)
         "  -i, --interval=N       : set interval in msec (default: %d msec)" CRLF
         "  -p, --pid-file=S       : set pid file (default: %s)" CRLF
         "  -C, --command=S        : set command to execute (default: %s)" CRLF
+        "  -r, --role=S           : set the role of the nodes that command to execute on (default: %s, you can input: %s, %s or %s)" CRLF
         "",
         RCT_LOG_DEFAULT, RCT_LOG_MIN, RCT_LOG_MAX,
         RCT_LOG_PATH != NULL ? RCT_LOG_PATH : "stderr",
@@ -58,7 +63,11 @@ rct_show_usage(void)
         RCT_ADDR, 
         RCT_INTERVAL,
         RCT_PID_FILE != NULL ? RCT_PID_FILE : "off",
-        RCT_COMMAND_DEFAULT);
+        RCT_COMMAND_DEFAULT,
+        RCT_OPTION_REDIS_ROLE_DEFAULT,
+        RCT_OPTION_REDIS_ROLE_ALL,
+        RCT_OPTION_REDIS_ROLE_MASTER,
+        RCT_OPTION_REDIS_ROLE_SLAVE);
 
 	rct_show_command_usage();
 }
@@ -92,6 +101,7 @@ rct_set_default_options(struct instance *nci)
     nci->pidfile = 0;
     
     nci->command = RCT_COMMAND_DEFAULT;
+	nci->role = RCT_OPTION_REDIS_ROLE_DEFAULT;
     nci->start = 0;
     nci->end = 0;
 }
@@ -168,6 +178,20 @@ rct_get_options(int argc, char **argv, struct instance *nci)
 		case 'C':
             nci->command = optarg;
             break;
+			
+		case 'r':
+            nci->role = optarg;
+			if(strcmp(nci->role, RCT_OPTION_REDIS_ROLE_ALL) != 0
+				&& strcmp(nci->role, RCT_OPTION_REDIS_ROLE_MASTER) != 0
+				&& strcmp(nci->role, RCT_OPTION_REDIS_ROLE_SLAVE) != 0)
+			{
+				log_stderr("redis-cluster-tool: option -r must be %s, %s or %s",
+					RCT_OPTION_REDIS_ROLE_ALL,
+					RCT_OPTION_REDIS_ROLE_MASTER,
+					RCT_OPTION_REDIS_ROLE_SLAVE);
+                return RCT_ERROR;
+			}
+            break;
 
         case '?':
             switch (optopt) {
@@ -184,6 +208,8 @@ rct_get_options(int argc, char **argv, struct instance *nci)
                 break;
 
             case 'a':
+			case 'C':
+			case 'r':
                 log_stderr("redis-cluster-tool: option -%c requires a string", optopt);
                 break;
 

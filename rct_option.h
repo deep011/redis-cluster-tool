@@ -3,6 +3,10 @@
 
 #define RCT_VERSION_STRING "0.1.0"
 
+#define RCT_OPTION_REDIS_ROLE_ALL		"all"
+#define RCT_OPTION_REDIS_ROLE_MASTER	RCT_REDIS_ROLE_NAME_MASTER
+#define RCT_OPTION_REDIS_ROLE_SLAVE		RCT_REDIS_ROLE_NAME_SLAVE
+
 struct instance;
 
 void rct_show_usage(void);

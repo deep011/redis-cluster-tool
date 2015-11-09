@@ -38,6 +38,15 @@
 typedef int r_status; /* return type */
 typedef int err_t;     /* error type */
 
+#define RCT_REDIS_ROLE_NULL		0
+#define RCT_REDIS_ROLE_ALL		1
+#define RCT_REDIS_ROLE_MASTER	2
+#define RCT_REDIS_ROLE_SLAVE	3
+
+#define RCT_REDIS_ROLE_NAME_NODE	"node"
+#define RCT_REDIS_ROLE_NAME_MASTER	"master"
+#define RCT_REDIS_ROLE_NAME_SLAVE	"slave"
+
 #include <stdio.h>
 #include <time.h>
 #include <sys/types.h>
@@ -83,6 +92,7 @@ struct instance {
     int             daemonize;
     
     char            *command;
+	char			*role;
     uint64_t        start;
     uint64_t        end;
 };
@@ -92,6 +102,7 @@ typedef struct rctContext {
 	dict *commands;             /* Command table */
 	char *address;
 	char *cmd;
+	uint8_t redis_role;
 	struct hiarray args;
 }rctContext;
 
@@ -99,6 +110,7 @@ void nodes_get_state(rctContext *ctx, int type);
 void slots_state(rctContext *ctx, int type);
 void show_nodes_hold_slot_num(rctContext *ctx, int type);
 void show_new_nodes_name(rctContext *ctx, int type);
+void show_nodes_list(rctContext *ctx, int type);
 void cluster_rebalance(rctContext *ctx, int type);
 void do_command(rctContext *ctx, int type);
 void do_command_node_by_node(rctContext *ctx, int type);

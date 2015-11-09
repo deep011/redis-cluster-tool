@@ -24,7 +24,9 @@ struct RCTCommand rctCommandTable[] = {
 	{RCT_CMD_CLUSTER_CONFIG_SET, "Set config to every node in the cluster.", 
 		do_command_node_by_node, REDIS_COMMAND_CONFIG_SET, 2, 2, 1},
 	{RCT_CMD_CLUSTER_CONFIG_REWRITE, "Rewrite every node config to echo node for the cluster.", 
-		do_command_node_by_node, REDIS_COMMAND_CONFIG_REWRITE, 0, 0, 1}
+		do_command_node_by_node, REDIS_COMMAND_CONFIG_REWRITE, 0, 0, 1},
+	{RCT_CMD_NODE_LIST, "List the nodes", 
+		show_nodes_list, -1, 0, 0, 0}
 };
 
 

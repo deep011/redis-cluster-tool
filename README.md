@@ -16,9 +16,9 @@ To build redis-cluster-tool:
 ## Help
 
     Usage: redis-cluster-tool [-?hVd] [-v verbosity level] [-o output file]
-                    [-c conf file] [-a addr] [-i interval]
-                    [-p pid file]
-    
+                  [-c conf file] [-a addr] [-i interval]
+                  [-p pid file] [-C command] [-r redis role]
+
     Options:
     -h, --help             : this help
     -V, --version          : show version and exit
@@ -30,6 +30,7 @@ To build redis-cluster-tool:
     -i, --interval=N       : set interval in msec (default: 1000 msec)
     -p, --pid-file=S       : set pid file (default: off)
     -C, --command=S        : set command to execute (default: cluster_state)
+    -r, --role=S           : set the role of the nodes that command to execute on (default: all, you can input: all, master or slave)
     
     Commands:
         cluster_state                 :Show the cluster state.
@@ -42,8 +43,9 @@ To build redis-cluster-tool:
         flushall                      :Flush all the cluster.
         cluster_config_get            :Get config from every node in the cluster and check consistency.
         cluster_config_set            :Set config to every node in the cluster.
-    
-    
+        cluster_config_rewrite        :Rewrite every node config to echo node for the cluster.
+        node_list                     :List the nodes
+        
 ## Explanation
 
 Now -d, -v, -o, -c, -i and -p options are not used, maybe they would be using in the future.
@@ -55,21 +57,21 @@ The command must be covered by double quotation marks, if there were more than o
 
 **Get the cluster state:**
 
-    $redis-cluster-tool -a 127.0.0.1:34501 -C cluster_state
-    node[127.0.0.1:34504] cluster_state is ok 
-    node[127.0.0.1:34501] cluster_state is ok 
-    node[127.0.0.1:34502] cluster_state is ok 
-    node[127.0.0.1:34503] cluster_state is ok 
+    $redis-cluster-tool -a 127.0.0.1:34501 -C cluster_state -r master
+    master[127.0.0.1:34504] cluster_state is ok 
+    master[127.0.0.1:34501] cluster_state is ok 
+    master[127.0.0.1:34502] cluster_state is ok 
+    master[127.0.0.1:34503] cluster_state is ok 
     all nodes cluster_state is ok
 
     
 **Get the cluster used memory:**
 
-    $redis-cluster-tool -a 127.0.0.1:34501 -C cluster_used_memory
-    node[127.0.0.1:34504] used 195 M	25%
-    node[127.0.0.1:34501] used 195 M	25%
-    node[127.0.0.1:34502] used 195 M	25%
-    node[127.0.0.1:34503] used 195 M	25%
+    $redis-cluster-tool -a 127.0.0.1:34501 -C cluster_used_memory -r master
+    master[127.0.0.1:34504] used 195 M	25%
+    master[127.0.0.1:34501] used 195 M	25%
+    master[127.0.0.1:34502] used 195 M	25%
+    master[127.0.0.1:34503] used 195 M	25%
     cluster used 780 M
     
 
@@ -92,11 +94,11 @@ Then you can use "redis-trib.rb reshard --yes --from e1a4ba9922555bfc961f987213e
 
 **Get a config from every node in cluster:**
 
-    $redis-cluster-tool -a 127.0.0.1:34501 -C "cluster_config_get maxmemory"
-    node 127.0.0.1:34501 config maxmemory is 1048576000 (1000MB)
-    node 127.0.0.1:34502 config maxmemory is 1048576000 (1000MB)
-    node 127.0.0.1:34503 config maxmemory is 1048576000 (1000MB)
-    node 127.0.0.1:34504 config maxmemory is 1048576000 (1000MB)
+    $redis-cluster-tool -a 127.0.0.1:34501 -C "cluster_config_get maxmemory" -r master
+    master[127.0.0.1:34501] config maxmemory is 1048576000 (1000MB)
+    master[127.0.0.1:34502] config maxmemory is 1048576000 (1000MB)
+    master[127.0.0.1:34503] config maxmemory is 1048576000 (1000MB)
+    master[127.0.0.1:34504] config maxmemory is 1048576000 (1000MB)
 
     All nodes config are Consistent
     cluster total maxmemory: 4194304000 (4000MB)
