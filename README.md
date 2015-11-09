@@ -15,7 +15,7 @@ To build redis-cluster-tool:
 
 ## Help
 
-    Usage: redis_cluster_tool [-?hVd] [-v verbosity level] [-o output file]
+    Usage: redis-cluster-tool [-?hVd] [-v verbosity level] [-o output file]
                     [-c conf file] [-a addr] [-i interval]
                     [-p pid file]
     
@@ -55,7 +55,7 @@ The command must be covered by double quotation marks, if there were more than o
 
 **Get the cluster state:**
 
-    $redis_cluster_tool -a 127.0.0.1:34501 -C cluster_state
+    $redis-cluster-tool -a 127.0.0.1:34501 -C cluster_state
     node[127.0.0.1:34504] cluster_state is ok 
     node[127.0.0.1:34501] cluster_state is ok 
     node[127.0.0.1:34502] cluster_state is ok 
@@ -65,7 +65,7 @@ The command must be covered by double quotation marks, if there were more than o
     
 **Get the cluster used memory:**
 
-    $redis_cluster_tool -a 127.0.0.1:34501 -C cluster_used_memory
+    $redis-cluster-tool -a 127.0.0.1:34501 -C cluster_used_memory
     node[127.0.0.1:34504] used 195 M	25%
     node[127.0.0.1:34501] used 195 M	25%
     node[127.0.0.1:34502] used 195 M	25%

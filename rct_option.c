@@ -34,7 +34,7 @@ void
 rct_show_usage(void)
 {
     log_stderr(
-        "Usage: redis_cluster_tool [-?hVd] [-v verbosity level] [-o output file]" CRLF
+        "Usage: redis-cluster-tool [-?hVd] [-v verbosity level] [-o output file]" CRLF
         "                  [-c conf file] [-a addr] [-i interval]" CRLF
         "                  [-p pid file]" CRLF
         "");
@@ -103,7 +103,7 @@ rct_get_options(int argc, char **argv, struct instance *nci)
 
 	if(argc <= 1)
 	{
-		log_stderr("redis_cluster_tool needs some options.\n");
+		log_stderr("redis-cluster-tool needs some options.\n");
 		return RCT_ERROR;
 	}
 
@@ -133,7 +133,7 @@ rct_get_options(int argc, char **argv, struct instance *nci)
         case 'v':
             value = rct_atoi(optarg);
             if (value < 0) {
-                log_stderr("redis_cluster_tool: option -v requires a number");
+                log_stderr("redis-cluster-tool: option -v requires a number");
                 return RCT_ERROR;
             }
             nci->log_level = value;
@@ -150,7 +150,7 @@ rct_get_options(int argc, char **argv, struct instance *nci)
         case 'i':
             value = rct_atoi(optarg);
             if (value < 0) {
-                log_stderr("redis_cluster_tool: option -i requires a number");
+                log_stderr("redis-cluster-tool: option -i requires a number");
                 return RCT_ERROR;
             }
 
@@ -174,27 +174,27 @@ rct_get_options(int argc, char **argv, struct instance *nci)
             case 'o':
             case 'c':
             case 'p':
-                log_stderr("redis_cluster_tool: option -%c requires a file name",
+                log_stderr("redis-cluster-tool: option -%c requires a file name",
                            optopt);
                 break;
 
             case 'v':
             case 'i':
-                log_stderr("redis_cluster_tool: option -%c requires a number", optopt);
+                log_stderr("redis-cluster-tool: option -%c requires a number", optopt);
                 break;
 
             case 'a':
-                log_stderr("redis_cluster_tool: option -%c requires a string", optopt);
+                log_stderr("redis-cluster-tool: option -%c requires a string", optopt);
                 break;
 
             default:
-                log_stderr("redis_cluster_tool: invalid option -- '%c'", optopt);
+                log_stderr("redis-cluster-tool: invalid option -- '%c'", optopt);
                 break;
             }
             return RCT_ERROR;
 
         default:
-            log_stderr("redis_cluster_tool: invalid option -- '%c'", optopt);
+            log_stderr("redis-cluster-tool: invalid option -- '%c'", optopt);
             return RCT_ERROR;
 
         }
