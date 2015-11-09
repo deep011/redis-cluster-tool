@@ -139,7 +139,7 @@ int main(int argc,char *argv[])
     }
     
     if (nci.show_version) {
-        log_stderr("This is redis_cluster_tool-%s" CRLF, RCT_VERSION_STRING);
+        log_stderr("This is redis-cluster-tool-%s" CRLF, RCT_VERSION_STRING);
         if (nci.show_help) {
             rct_show_usage();
         }
