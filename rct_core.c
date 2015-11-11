@@ -480,16 +480,12 @@ void nodes_keys_num(redisClusterContext *cc)
 				continue;
 			}
 			
-			//printf("reply->type : %d\n", reply->type);
-			
 			if(reply->type != REDIS_REPLY_STRING)
 			{
 				printf("error: reply type error!\n");
 				goto done;
 			}
 			
-			//printf("reply->str : %s\n", reply->str);
-			//print_string_with_length_fix_CRLF(reply->str, reply->len);
 			line = sdssplitlen(reply->str, reply->len, "\r\n", 2, &line_len);
 			if(line == NULL)
 			{
@@ -582,7 +578,7 @@ long long node_key_num(redisClusterContext *cc, cluster_node *node, int isprint)
 	redisContext *c = NULL;
 	redisReply *reply = NULL;
 	
-	if(node == NULL || node->slots == NULL)
+	if(node == NULL)
 	{
 		return -1;
 	}
@@ -714,7 +710,7 @@ long long node_memory_size(redisClusterContext *cc, cluster_node *node, int ispr
 	redisReply *reply = NULL;
 	int i;
 	
-	if(node == NULL || node->slots == NULL)
+	if(node == NULL)
 	{
 		return -1;
 	}
@@ -834,7 +830,7 @@ sds node_cluster_state(rctContext *ctx, cluster_node *node, void *data, int ispr
 		format_space[0] = ' ';
 	}
 	
-	if(node == NULL || node->slots == NULL)
+	if(node == NULL)
 	{
 		return NULL;
 	}

@@ -4,9 +4,9 @@ OPTIMIZATION?=-O3
 WARNINGS=-Wall -W -Wstrict-prototypes -Wwrite-strings
 DEBUG?= -g -ggdb
 HIREDIS_INSTALL_DIR?=/usr/local
-CFLAGS+=-I$(HIREDIS_INSTALL_DIR)/include/hiredis
+CFLAGS+=-I$(HIREDIS_INSTALL_DIR)/include/hiredis-vip
 LDFLAGS+=-L$(HIREDIS_INSTALL_DIR)/lib
-REAL_CFLAGS=$(OPTIMIZATION) -lhiredis -fPIC $(CFLAGS) $(WARNINGS) $(DEBUG) $(ARCH)
+REAL_CFLAGS=$(OPTIMIZATION) -lhiredis_vip -fPIC $(CFLAGS) $(WARNINGS) $(DEBUG) $(ARCH)
 REAL_LDFLAGS=$(LDFLAGS) $(ARCH)
 
 # Installation related variables and target
@@ -36,6 +36,7 @@ rct_util.o: rct_util.c rct_core.h rct_util.h rct_option.h rct_log.h \
  rct_command.h
 
 install:
+	mkdir -p $(INSTALL_PATH)
 	$(INSTALL) redis-cluster-tool $(INSTALL_PATH)
  
 clean :
