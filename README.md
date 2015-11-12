@@ -19,9 +19,9 @@ You can "yum install redis-cluster-tool" or "apt-get install redis-cluster-tool"
 
 Before install the package, execute the follow command first:
 
-**deb package** : "curl -s https://packagecloud.io/install/repositories/deep/packages/script.deb.sh | sudo bash"
+**deb package** : `curl -s https://packagecloud.io/install/repositories/deep/packages/script.deb.sh | sudo bash`
 
-**rpm package** : "curl -s https://packagecloud.io/install/repositories/deep/packages/script.rpm.sh | sudo bash"
+**rpm package** : `curl -s https://packagecloud.io/install/repositories/deep/packages/script.rpm.sh | sudo bash`
 
 You can also download the packages from "https://packagecloud.io/deep/packages" and install by yourself.
 
