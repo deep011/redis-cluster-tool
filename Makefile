@@ -3,9 +3,9 @@ CC:=$(shell sh -c 'type $(CC) >/dev/null 2>/dev/null && echo $(CC) || echo gcc')
 OPTIMIZATION?=-O3
 WARNINGS=-Wall -W -Wstrict-prototypes -Wwrite-strings
 DEBUG?= -g -ggdb
-HIREDIS_INSTALL_DIR?=/usr/local
-CFLAGS+=-I$(HIREDIS_INSTALL_DIR)/include/hiredis-vip
-LDFLAGS+=-L$(HIREDIS_INSTALL_DIR)/lib
+HIREDIS_VIP_INSTALL_DIR?=/usr/local
+CFLAGS+=-I$(HIREDIS_VIP_INSTALL_DIR)/include/hiredis-vip
+LDFLAGS+=-L$(HIREDIS_VIP_INSTALL_DIR)/lib
 REAL_CFLAGS=$(OPTIMIZATION) -lhiredis_vip -fPIC $(CFLAGS) $(WARNINGS) $(DEBUG) $(ARCH)
 REAL_LDFLAGS=$(LDFLAGS) $(ARCH)
 

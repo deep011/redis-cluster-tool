@@ -8,11 +8,23 @@ redis-cluster-tool need hiredis-vip(https://github.com/vipshop/hiredis-vip), so 
 
 To build redis-cluster-tool:
 
-    $ export HIREDIS_INSTALL_DIR="your hiredis-vip install path"
+    $ export HIREDIS_VIP_INSTALL_DIR="your hiredis-vip install path"
     $ export PREFIX="the path for redis-cluster-tool to install"
     $ make
     $ sudo make install
 
+## Package
+
+You can "yum install redis-cluster-tool" or "apt-get install redis-cluster-tool" instead of building from source code.
+Before install the package, execute the follow command first:
+deb package : "curl -s https://packagecloud.io/install/repositories/deep/packages/script.deb.sh | sudo bash"
+rpm package : "curl -s https://packagecloud.io/install/repositories/deep/packages/script.rpm.sh | sudo bash"
+
+You can also download the packages from "https://packagecloud.io/deep/packages" and install by yourself.
+Attention : package redis-cluster-tool is depend on package hiredis-vip.
+
+If you want to support other OS packages, please contact with me.
+	
 ## Help
 
     Usage: redis-cluster-tool [-?hVd] [-v verbosity level] [-o output file]
