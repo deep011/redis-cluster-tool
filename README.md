@@ -16,11 +16,15 @@ To build redis-cluster-tool:
 ## Package
 
 You can "yum install redis-cluster-tool" or "apt-get install redis-cluster-tool" instead of building from source code.
+
 Before install the package, execute the follow command first:
-deb package : "curl -s https://packagecloud.io/install/repositories/deep/packages/script.deb.sh | sudo bash"
-rpm package : "curl -s https://packagecloud.io/install/repositories/deep/packages/script.rpm.sh | sudo bash"
+
+**deb package** : "curl -s https://packagecloud.io/install/repositories/deep/packages/script.deb.sh | sudo bash"
+
+**rpm package** : "curl -s https://packagecloud.io/install/repositories/deep/packages/script.rpm.sh | sudo bash"
 
 You can also download the packages from "https://packagecloud.io/deep/packages" and install by yourself.
+
 Attention : package redis-cluster-tool is depend on package hiredis-vip.
 
 If you want to support other OS packages, please contact with me.
