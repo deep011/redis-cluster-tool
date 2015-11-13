@@ -26,7 +26,9 @@ struct RCTCommand rctCommandTable[] = {
 	{RCT_CMD_CLUSTER_CONFIG_REWRITE, "Rewrite every node config to echo node for the cluster.", 
 		do_command_node_by_node, REDIS_COMMAND_CONFIG_REWRITE, 0, 0, 1},
 	{RCT_CMD_NODE_LIST, "List the nodes", 
-		show_nodes_list, -1, 0, 0, 0}
+		show_nodes_list, -1, 0, 0, 0},
+	{RCT_CMD_DEL_KEYS, "Delete keys in the cluster. The keys must match a given glob-style pattern.", 
+		cluster_del_keys, -1, 1, 5, 1}
 };
 
 

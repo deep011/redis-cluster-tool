@@ -31,7 +31,7 @@ If you want to support other OS packages, please contact with me.
 	
 ## Help
 
-    Usage: redis-cluster-tool [-?hVd] [-v verbosity level] [-o output file]
+    Usage: redis-cluster-tool [-?hVds] [-v verbosity level] [-o output file]
                   [-c conf file] [-a addr] [-i interval]
                   [-p pid file] [-C command] [-r redis role]
 
@@ -39,6 +39,7 @@ If you want to support other OS packages, please contact with me.
     -h, --help             : this help
     -V, --version          : show version and exit
     -d, --daemonize        : run as a daemon
+    -s, --simple           : show the output not in detail
     -v, --verbosity=N      : set logging level (default: 5, min: 0, max: 11)
     -o, --output=S         : set logging file (default: stderr)
     -c, --conf-file=S      : set configuration file (default: conf/rct.yml)

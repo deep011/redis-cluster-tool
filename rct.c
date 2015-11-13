@@ -115,6 +115,15 @@ init_context(struct instance *nci)
 		rct_ctx->redis_role = RCT_REDIS_ROLE_NULL;
 	}
 
+	if(nci->simple)
+	{
+		rct_ctx->simple = 1;
+	}
+	else
+	{
+		rct_ctx->simple = 0;
+	}
+	
 	return rct_ctx;
 }
 

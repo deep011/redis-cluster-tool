@@ -358,7 +358,11 @@ void show_nodes_list(rctContext *ctx, int type)
 
 void show_nodes_hold_slot_num(rctContext *ctx, int type)
 {
-	nodes_hold_slot_num(ctx->cc->nodes, 1);
+	int total_slot_num;
+
+	total_slot_num = nodes_hold_slot_num(ctx->cc->nodes, ctx->simple?0:1);
+
+	printf("cluster holds %d slots\n", total_slot_num);
 }
 
 
@@ -426,7 +430,7 @@ int nodes_hold_slot_num(dict *nodes, int isprint)
 				(statistics_node->slot_num_now*100)/total_slot_num);
 		}
 		
-		printf("\ncluster holds %d slots\n", total_slot_num);
+		printf("\n");
 		statistics_nodes->nelem = 0;
 		hiarray_destroy(statistics_nodes);
 	}
@@ -840,7 +844,8 @@ sds node_cluster_state(rctContext *ctx, cluster_node *node, void *data, int ispr
 		sdata->first_flag = 0;
 	}
 	else if(ctx->redis_role == RCT_REDIS_ROLE_ALL && 
-			(node->role == REDIS_ROLE_MASTER))
+			(node->role == REDIS_ROLE_MASTER) && 
+			ctx->simple == 0)
 	{
 		log_stderr("");
 	}
@@ -941,42 +946,58 @@ static int node_get_state(rctContext *ctx, cluster_node *node,
 	redis_node *statistics_node = NULL;
 	state_data *sdata = data;
 	sds cluster_state = NULL;
+	long long value;
 	
 	switch(state_type)
 	{
 	case REDIS_KEY_NUM:
-		statistics_node = hiarray_push(statistics_nodes);
+
+		value = node_key_num(cc, node, 0);
+
+		if(statistics_nodes != NULL)
+		{
+			statistics_node = hiarray_push(statistics_nodes);
 	
-		statistics_node->addr = node->addr;
-		statistics_node->role_name = node_role_name(node);
-			
-		statistics_node->key_num = node_key_num(cc, node, 0);
+			statistics_node->addr = node->addr;
+			statistics_node->role_name = node_role_name(node);
+				
+			statistics_node->key_num = value;
+		}
 		
-		if(statistics_node->key_num < 0)
+		if(value < 0)
 		{
 			goto error;
 		}
 		
-		sdata->num_sum += statistics_node->key_num;
+		sdata->num_sum += value;
+		
 		break;
 	case REDIS_MEMORY:
-		statistics_node = hiarray_push(statistics_nodes);
-	
-		statistics_node->addr = node->addr;
-		statistics_node->role_name = node_role_name(node);
+
+		value = node_memory_size(cc, node, 0)/1048576;
+
+		if(statistics_nodes != NULL)
+		{
+
+			statistics_node = hiarray_push(statistics_nodes);
 		
-		statistics_node->used_memory = node_memory_size(cc, node, 0)/1048576;
-		
-		if(statistics_node->used_memory < 0)
+			statistics_node->addr = node->addr;
+			statistics_node->role_name = node_role_name(node);
+			
+			statistics_node->used_memory = value;
+		}
+
+		if(value < 0)
 		{
 			goto error;
 		}
 		
-		sdata->num_sum += statistics_node->used_memory;
+		sdata->num_sum += value;
+		
 		break;
 	case NODES_CLUSTER_STATE:
 		
-		cluster_state = node_cluster_state(ctx, node, sdata, 1);
+		cluster_state = node_cluster_state(ctx, node, sdata, ctx->simple?0:1);
 		if(cluster_state == NULL)
 		{
 			sdata->all_is_ok = 0;
@@ -1045,11 +1066,14 @@ void nodes_get_state(rctContext *ctx, int type)
 	{
 		return;
 	}
-	
-	statistics_nodes = hiarray_create(nodes_count, sizeof(*statistics_node));
-	if(statistics_nodes == NULL)
+
+	if(ctx->simple == 0)
 	{
-		return;
+		statistics_nodes = hiarray_create(nodes_count, sizeof(*statistics_node));
+		if(statistics_nodes == NULL)
+		{
+			return;
+		}
 	}
 	
 	di = dictGetIterator(nodes);
@@ -1092,8 +1116,8 @@ void nodes_get_state(rctContext *ctx, int type)
 		}
 		
     }
-    
-	for(i = 0; i < hiarray_n(statistics_nodes); i ++)
+
+	for(i = 0; ctx->simple == 0 && i < hiarray_n(statistics_nodes); i ++)
 	{
 		statistics_node = hiarray_get(statistics_nodes, i);
 
@@ -1166,8 +1190,11 @@ void nodes_get_state(rctContext *ctx, int type)
 	}
 	
 done:
-
-	log_stderr("");
+	if(ctx->simple == 0)
+	{
+		log_stderr("");
+	}
+	
 	switch(state_type)
 	{
 	case REDIS_KEY_NUM:
@@ -1223,7 +1250,8 @@ static int do_command_with_node(rctContext *ctx, cluster_node *node,
 		cgdata->first_flag = 0;
 	}
 	else if(ctx->redis_role == RCT_REDIS_ROLE_ALL && 
-		node->role == REDIS_ROLE_MASTER)
+		node->role == REDIS_ROLE_MASTER
+		&& ctx->simple == 0)
 	{
 		log_stderr("");
 	}
@@ -1257,8 +1285,11 @@ static int do_command_with_node(rctContext *ctx, cluster_node *node,
 		case REDIS_COMMAND_FLUSHALL:
 		case REDIS_COMMAND_CONFIG_SET:
 		case REDIS_COMMAND_CONFIG_REWRITE:
-			log_stderr("%s%s[%s] %s OK",format_space, 
-				node_role_name(node), node->addr, command);
+			if(ctx->simple == 0)
+			{
+				log_stderr("%s%s[%s] %s OK",format_space, 
+					node_role_name(node), node->addr, command);
+			}
 			break;
 		case REDIS_COMMAND_CONFIG_GET:
 
@@ -1313,12 +1344,15 @@ static int do_command_with_node(rctContext *ctx, cluster_node *node,
 			if(strcmp("maxmemory", *(sds*)hiarray_get(&ctx->args, 0)) == 0)
 			{
 				long long memory_num = rct_atoll(reply->element[1]->str, reply->element[1]->len);
-				log_stderr("%s%s[%s] config %s is %s (%lldMB)", format_space, node_role_name(node), 
-					node->addr, reply->element[0]->str, reply->element[1]->str, 
-					memory_num/(1024*1024));
+				if(ctx->simple == 0)
+				{
+					log_stderr("%s%s[%s] config %s is %s (%lldMB)", format_space, node_role_name(node), 
+						node->addr, reply->element[0]->str, reply->element[1]->str, 
+						memory_num/(1024*1024));
+				}
 				cgdata->sum += memory_num;
 			}
-			else
+			else if(ctx->simple == 0)
 			{
 				log_stderr("%s%s[%s] config %s is %s", format_space, node_role_name(node), 
 					node->addr, reply->element[0]->str, reply->element[1]->str);
@@ -1548,12 +1582,27 @@ void do_command_node_by_node(rctContext *ctx, int type)
 		
 		break;
 	case REDIS_COMMAND_CONFIG_GET:
-		log_stderr("");
+
+		if(ctx->simple == 0)
+		{
+			log_stderr("");
+		}
+		
 		if(all_is_ok)
 		{
 			if(data.all_is_consistent)
 			{
-				log_stderr("All nodes config are Consistent");
+				if(strcmp("maxmemory", *(sds*)hiarray_get(&ctx->args, 0)) == 0)
+				{
+					log_stderr("All nodes config %s are Consistent: %s (%lldMB)",
+						*(sds*)hiarray_get(&ctx->args, 0), data.compare_value,
+						rct_atoll(data.compare_value, sdslen(data.compare_value))/(1024*1024));
+				}
+				else
+				{
+					log_stderr("All nodes config %s are Consistent: %s",
+						*(sds*)hiarray_get(&ctx->args, 0), data.compare_value);
+				}
 			}
 			else
 			{
@@ -1564,7 +1613,17 @@ void do_command_node_by_node(rctContext *ctx, int type)
 		{
 			if(data.all_is_consistent)
 			{
-				log_stderr("Other nodes config are Consistent");
+				if(strcmp("maxmemory", *(sds*)hiarray_get(&ctx->args, 0)) == 0)
+				{
+					log_stderr("Other nodes config %s are Consistent: %s (%lldMB)",
+						*(sds*)hiarray_get(&ctx->args, 0), data.compare_value,
+						rct_atoll(data.compare_value, sdslen(data.compare_value))/(1024*1024));
+				}
+				else
+				{
+					log_stderr("Other nodes config %s are Consistent: %s",
+						*(sds*)hiarray_get(&ctx->args, 0), data.compare_value);
+				}
 			}
 			else
 			{
@@ -1696,6 +1755,13 @@ done:
 		freeReplyObject(reply);
 		reply = NULL;	
 	}
+}
+
+void cluster_del_keys(rctContext *ctx, int type)
+{
+	
+	
+	
 }
 
 int core_core(rctContext *ctx)

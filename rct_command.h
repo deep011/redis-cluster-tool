@@ -15,6 +15,7 @@
 #define RCT_CMD_CLUSTER_DO_COMMAND		"cluster_do_command"
 #define RCT_CMD_CLUSTER_GET_STATE		"cluster_get_state"
 #define RCT_CMD_NODE_LIST				"node_list"
+#define RCT_CMD_DEL_KEYS				"del_keys"
 
 
 #define CMD_FLAG_NEED_CONFIRM 			(1<<0)

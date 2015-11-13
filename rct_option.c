@@ -29,16 +29,17 @@ static struct option long_options[] = {
     { "pid-file",       required_argument,  NULL,   'p' },
     { "command",        required_argument,  NULL,   'C' },
     { "role",        	required_argument,  NULL,   'r' },
+    { "simple",        	required_argument,  NULL,   's' },
     { NULL,             0,                  NULL,    0  }
 };
 
-static char short_options[] = "hVdo:v:c:a:i:p:C:r:";
+static char short_options[] = "hVdo:v:c:a:i:p:C:r:s";
 
 void
 rct_show_usage(void)
 {
     log_stderr(
-        "Usage: redis-cluster-tool [-?hVd] [-v verbosity level] [-o output file]" CRLF
+        "Usage: redis-cluster-tool [-?hVds] [-v verbosity level] [-o output file]" CRLF
         "                  [-c conf file] [-a addr] [-i interval]" CRLF
         "                  [-p pid file] [-C command] [-r redis role]" CRLF
         "");
@@ -46,7 +47,8 @@ rct_show_usage(void)
         "Options:" CRLF
         "  -h, --help             : this help" CRLF
         "  -V, --version          : show version and exit" CRLF
-        "  -d, --daemonize        : run as a daemon");
+        "  -d, --daemonize        : run as a daemon" CRLF
+        "  -s, --simple           : show the output not in detail");
     log_stderr(
         "  -v, --verbosity=N      : set logging level (default: %d, min: %d, max: %d)" CRLF
         "  -o, --output=S         : set logging file (default: %s)" CRLF
@@ -104,6 +106,7 @@ rct_set_default_options(struct instance *nci)
 	nci->role = RCT_OPTION_REDIS_ROLE_DEFAULT;
     nci->start = 0;
     nci->end = 0;
+	nci->simple = 0;
 }
 
 r_status
@@ -192,7 +195,11 @@ rct_get_options(int argc, char **argv, struct instance *nci)
                 return RCT_ERROR;
 			}
             break;
-
+			
+		case 's':
+			nci->simple = 1;
+			break;
+			
         case '?':
             switch (optopt) {
             case 'o':

@@ -95,6 +95,7 @@ struct instance {
 	char			*role;
     uint64_t        start;
     uint64_t        end;
+	int				simple;
 };
 
 typedef struct rctContext {
@@ -103,6 +104,7 @@ typedef struct rctContext {
 	char *address;
 	char *cmd;
 	uint8_t redis_role;
+	uint8_t simple;
 	struct hiarray args;
 }rctContext;
 
@@ -114,6 +116,7 @@ void show_nodes_list(rctContext *ctx, int type);
 void cluster_rebalance(rctContext *ctx, int type);
 void do_command(rctContext *ctx, int type);
 void do_command_node_by_node(rctContext *ctx, int type);
+void cluster_del_keys(rctContext *ctx, int type);
 
 #endif
 
