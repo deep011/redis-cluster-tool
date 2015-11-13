@@ -61,18 +61,18 @@ void slots_state(rctContext *ctx, int type)
 	for(i = 0; i < hiarray_n(cc->slots); i ++, num ++)
 	{
 		struct cluster_slot **slot = (struct cluster_slot **)(hiarray_get(cc->slots, i));
-		log_stderr("start : %d", (*slot)->start);
-		log_stderr("end : %d", (*slot)->end);
-		log_stderr("name : %s", (*slot)->node->name);
-		log_stderr("host : %s", (*slot)->node->host);
-		log_stderr("port : %d", (*slot)->node->port);
-		log_stderr("addr : %s", (*slot)->node->addr);
-		log_stderr("node role : %s", node_role_name((*slot)->node));
-		log_stderr("context : %d", (*slot)->node->con?1:0);
-		log_stderr("asyncContext : %d\n", (*slot)->node->acon?1:0);
+		log_stdout("start : %d", (*slot)->start);
+		log_stdout("end : %d", (*slot)->end);
+		log_stdout("name : %s", (*slot)->node->name);
+		log_stdout("host : %s", (*slot)->node->host);
+		log_stdout("port : %d", (*slot)->node->port);
+		log_stdout("addr : %s", (*slot)->node->addr);
+		log_stdout("node role : %s", node_role_name((*slot)->node));
+		log_stdout("context : %d", (*slot)->node->con?1:0);
+		log_stdout("asyncContext : %d\n", (*slot)->node->acon?1:0);
 	}	
 
-	log_stderr("total solts region num : %d", num);
+	log_stdout("total solts region num : %d", num);
 }
 
 int node_hold_slot_num(struct cluster_node *node, redis_node *r_node, int isprint)
@@ -113,7 +113,7 @@ int node_hold_slot_num(struct cluster_node *node, redis_node *r_node, int isprin
 	
 	if(isprint)
 	{
-		printf("node[%s] holds %d slots_region and %d slots\n", node->addr, slots_count, slot_count);
+		log_stdout("node[%s] holds %d slots_region and %d slots", node->addr, slots_count, slot_count);
 	}
 
 	return slot_count;
@@ -198,7 +198,6 @@ void cluster_rebalance(rctContext *ctx, int type)
 	for(i = 0; i < array_len; i ++)
 	{
 		node_to_reshard = hiarray_get(reshard_nodes, i);
-		//printf("%s\t%d\t%d\n", node_to_reshard->name, node_to_reshard->slot_num_now, node_to_reshard->slot_num_move);
 	}
 	
 	begin_index = array_len - nodes_num_need_import;
@@ -216,7 +215,6 @@ void cluster_rebalance(rctContext *ctx, int type)
 			for(i = 0; i < array_len; i ++)
 			{
 				node_to_reshard = hiarray_get(reshard_nodes, i);
-				//printf("%s\t%d\t%d\n", node_to_reshard->name, node_to_reshard->slot_num_now, node_to_reshard->slot_num_move);
 			}
 			break;
 		}
@@ -255,7 +253,7 @@ void cluster_rebalance(rctContext *ctx, int type)
 			i --;
 			begin_index ++;
 		}
-		printf("--from %s --to %s --slots %d\n", node_reshard_from->name, node_reshard_to->name, slot_num_to_move);
+		log_stdout("--from %s --to %s --slots %d", node_reshard_from->name, node_reshard_to->name, slot_num_to_move);
 	}
 
 	reshard_nodes->nelem = 0;
@@ -281,7 +279,7 @@ void show_new_nodes_name(rctContext *ctx, int type)
 
 		if(node->slots == NULL || listLength(node->slots) == 0)
 		{
-			printf("%s\n", node->name==NULL?"NULL":node->name);
+			log_stdout("%s", node->name==NULL?"NULL":node->name);
 		}
 	}
 
@@ -316,13 +314,13 @@ void show_nodes_list(rctContext *ctx, int type)
 		else if(ctx->redis_role == RCT_REDIS_ROLE_ALL && 
 			(node->role == REDIS_ROLE_MASTER))
 		{
-			log_stderr("");
+			log_stdout("");
 		}
 
 		if(ctx->redis_role == RCT_REDIS_ROLE_ALL 
 			|| ctx->redis_role == RCT_REDIS_ROLE_MASTER)
 		{
-			log_stderr("master[%s]", node->addr);
+			log_stdout("master[%s]", node->addr);
 		}
 
 		if(ctx->redis_role == RCT_REDIS_ROLE_ALL
@@ -340,11 +338,11 @@ void show_nodes_list(rctContext *ctx, int type)
 				slave = listNodeValue(ln);
 				if(ctx->redis_role == RCT_REDIS_ROLE_SLAVE)
 				{
-					log_stderr("slave[%s]", slave->addr);
+					log_stdout("slave[%s]", slave->addr);
 				}
 				else
 				{
-					log_stderr(" slave[%s]", slave->addr);
+					log_stdout(" slave[%s]", slave->addr);
 				}
 			}
 
@@ -362,7 +360,7 @@ void show_nodes_hold_slot_num(rctContext *ctx, int type)
 
 	total_slot_num = nodes_hold_slot_num(ctx->cc->nodes, ctx->simple?0:1);
 
-	printf("cluster holds %d slots\n", total_slot_num);
+	log_stdout("cluster holds %d slots", total_slot_num);
 }
 
 
@@ -425,12 +423,12 @@ int nodes_hold_slot_num(dict *nodes, int isprint)
 		for(i = 0; i < hiarray_n(statistics_nodes) && total_slot_num > 0; i ++)
 		{
 			statistics_node = hiarray_get(statistics_nodes, i);
-			printf("node[%s] holds %d slots_region and %d slots\t%d\%\n", statistics_node->addr, 
+			log_stdout("node[%s] holds %d slots_region and %d slots\t%d%s", statistics_node->addr, 
 				statistics_node->slot_region_num_now, statistics_node->slot_num_now, 
-				(statistics_node->slot_num_now*100)/total_slot_num);
+				(statistics_node->slot_num_now*100)/total_slot_num,"%");
 		}
 		
-		printf("\n");
+		log_stdout("");
 		statistics_nodes->nelem = 0;
 		hiarray_destroy(statistics_nodes);
 	}
@@ -473,53 +471,53 @@ void nodes_keys_num(redisClusterContext *cc)
 			c = ctx_get_by_node(node, NULL, cc->flags);
 			if(c == NULL)
 			{	
-				printf("node[%s] get connect failed\n", node->addr);
+				log_stdout("node[%s] get connect failed", node->addr);
 				continue;
 			}
 			
 			reply = redisCommand(c, "info Keyspace");
 			if(reply == NULL)
 			{
-				printf("node[%s] get reply null()\n", node->addr, cc->errstr);
+				log_stdout("node[%s] get reply null()", node->addr, cc->errstr);
 				continue;
 			}
 			
 			if(reply->type != REDIS_REPLY_STRING)
 			{
-				printf("error: reply type error!\n");
+				log_stdout("error: reply type error!");
 				goto done;
 			}
 			
 			line = sdssplitlen(reply->str, reply->len, "\r\n", 2, &line_len);
 			if(line == NULL)
 			{
-				printf("error: line split error(null)!\n");
+				log_stdout("error: line split error(null)!");
 				goto done;
 			}
 			else if(line_len == 2)
 			{
-				printf("node[%s] has %d keys\n", node->addr, 0);
+				log_stdout("node[%s] has %d keys", node->addr, 0);
 				sdsfreesplitres(line, line_len);
 				line = NULL;
 				continue;
 			}
 			else if(line_len != 3)
 			{
-				printf("error: line split error(line_len != 3)!\n");
+				log_stdout("error: line split error(line_len != 3)!");
 				goto done;
 			}
 			
 			part = sdssplitlen(line[1], sdslen(line[1]), ",", 1, &part_len);
 			if(line == NULL || line_len != 3)
 			{
-				printf("error: part split error!\n");
+				log_stdout("error: part split error!");
 				goto done;
 			}
 			
 			partchild = sdssplitlen(part[0], sdslen(part[0]), "=", 1, &partchild_len);
 			if(partchild == NULL || partchild_len != 2)
 			{
-				printf("error: partchild split error!\n");
+				log_stdout("error: partchild split error!");
 				goto done;
 			}
 			
@@ -530,7 +528,7 @@ void nodes_keys_num(redisClusterContext *cc)
 				goto done;
 			}
 			
-			printf("node[%s] has %d keys\n", node->addr, node_keys_num);
+			log_stdout("node[%s] has %d keys", node->addr, node_keys_num);
 			
 			nodes_keys_num += node_keys_num;
 			
@@ -547,7 +545,7 @@ void nodes_keys_num(redisClusterContext *cc)
     }
     
 	
-	printf("cluster has %d keys\n", nodes_keys_num);
+	log_stdout("cluster has %d keys", nodes_keys_num);
 	
 done:	
 	
@@ -593,7 +591,7 @@ long long node_key_num(redisClusterContext *cc, cluster_node *node, int isprint)
 	{	
 		if(isprint)
 		{
-			log_stderr("node[%s] get connect failed", node->addr);
+			log_stdout("node[%s] get connect failed", node->addr);
 		}
 		key_num = -1;
 		goto done;
@@ -604,7 +602,7 @@ long long node_key_num(redisClusterContext *cc, cluster_node *node, int isprint)
 	{
 		if(isprint)
 		{
-			log_stderr("node[%s] get reply null(%s)", node->addr, c->errstr);
+			log_stdout("node[%s] get reply null(%s)", node->addr, c->errstr);
 		}
 		key_num = -1;
 		goto done;
@@ -614,7 +612,7 @@ long long node_key_num(redisClusterContext *cc, cluster_node *node, int isprint)
 	{
 		if(isprint)
 		{
-			log_stderr("error: reply type error!");
+			log_stdout("error: reply type error!");
 		}
 		key_num = -1;
 		goto done;
@@ -625,7 +623,7 @@ long long node_key_num(redisClusterContext *cc, cluster_node *node, int isprint)
 	{
 		if(isprint)
 		{
-			log_stderr("error: line split error(null)!");
+			log_stdout("error: line split error(null)!");
 		}
 		key_num = -1;
 		goto done;
@@ -635,7 +633,7 @@ long long node_key_num(redisClusterContext *cc, cluster_node *node, int isprint)
 		key_num = 0;
 		if(isprint)
 		{
-			log_stderr("node[%s] has %d keys", node->addr, key_num);
+			log_stdout("node[%s] has %d keys", node->addr, key_num);
 		}
 		goto done;
 	}
@@ -643,7 +641,7 @@ long long node_key_num(redisClusterContext *cc, cluster_node *node, int isprint)
 	{
 		if(isprint)
 		{
-			log_stderr("error: line split error(line_len != 3)!");
+			log_stdout("error: line split error(line_len != 3)!");
 		}
 		goto done;
 	}
@@ -653,7 +651,7 @@ long long node_key_num(redisClusterContext *cc, cluster_node *node, int isprint)
 	{
 		if(isprint)
 		{
-			log_stderr("error: part split error!");
+			log_stdout("error: part split error!");
 		}
 		goto done;
 	}
@@ -663,7 +661,7 @@ long long node_key_num(redisClusterContext *cc, cluster_node *node, int isprint)
 	{
 		if(isprint)
 		{
-			log_stderr("error: partchild split error!");
+			log_stdout("error: partchild split error!");
 		}
 		goto done;
 	}
@@ -677,7 +675,7 @@ long long node_key_num(redisClusterContext *cc, cluster_node *node, int isprint)
 	
 	if(isprint)
 	{
-		log_stderr("node[%s] has %d keys", node->addr, key_num);
+		log_stdout("node[%s] has %d keys", node->addr, key_num);
 	}
 	
 done:
@@ -724,7 +722,7 @@ long long node_memory_size(redisClusterContext *cc, cluster_node *node, int ispr
 	{	
 		if(isprint)
 		{
-			log_stderr("node[%s] get connect failed", node->addr);
+			log_stdout("node[%s] get connect failed", node->addr);
 		}
 		memory_size = -1;
 		goto done;
@@ -735,7 +733,7 @@ long long node_memory_size(redisClusterContext *cc, cluster_node *node, int ispr
 	{
 		if(isprint)
 		{
-			log_stderr("node[%s] get reply null(%s)", node->addr, c->errstr);
+			log_stdout("node[%s] get reply null(%s)", node->addr, c->errstr);
 		}
 		memory_size = -1;
 		goto done;
@@ -745,7 +743,7 @@ long long node_memory_size(redisClusterContext *cc, cluster_node *node, int ispr
 	{
 		if(isprint)
 		{
-			log_stderr("error: reply type error!");
+			log_stdout("error: reply type error!");
 		}
 		memory_size = -1;
 		goto done;
@@ -756,7 +754,7 @@ long long node_memory_size(redisClusterContext *cc, cluster_node *node, int ispr
 	{
 		if(isprint)
 		{
-			log_stderr("error: line split error(null)!");
+			log_stdout("error: line split error(null)!");
 		}
 		memory_size = -1;
 		goto done;
@@ -782,14 +780,14 @@ long long node_memory_size(redisClusterContext *cc, cluster_node *node, int ispr
 	
 	if(isprint)
 	{
-		log_stderr("error: key_value split error or used_memory not found!");
+		log_stdout("error: key_value split error or used_memory not found!");
 	}
 	memory_size = -1;
 	
 done:
 	if(isprint)
 	{
-		log_stderr("node[%s] used %lld M", node->addr, memory_size);
+		log_stdout("node[%s] used %lld M", node->addr, memory_size);
 	}
 
 	if(line)
@@ -847,7 +845,7 @@ sds node_cluster_state(rctContext *ctx, cluster_node *node, void *data, int ispr
 			(node->role == REDIS_ROLE_MASTER) && 
 			ctx->simple == 0)
 	{
-		log_stderr("");
+		log_stdout("");
 	}
 
 	c = ctx_get_by_node(node, NULL, cc->flags);
@@ -855,7 +853,7 @@ sds node_cluster_state(rctContext *ctx, cluster_node *node, void *data, int ispr
 	{	
 		if(isprint)
 		{
-			log_stderr("error: node[%s] get connect failed", node->addr);
+			log_stdout("error: node[%s] get connect failed", node->addr);
 		}
 		goto done;
 	}
@@ -865,7 +863,7 @@ sds node_cluster_state(rctContext *ctx, cluster_node *node, void *data, int ispr
 	{
 		if(isprint)
 		{
-			log_stderr("error: node[%s] get reply null()", node->addr, c->errstr);
+			log_stdout("error: node[%s] get reply null()", node->addr, c->errstr);
 		}
 		goto done;
 	}
@@ -874,7 +872,7 @@ sds node_cluster_state(rctContext *ctx, cluster_node *node, void *data, int ispr
 	{
 		if(isprint)
 		{
-			log_stderr("error: reply type error!");
+			log_stdout("error: reply type error!");
 		}
 		goto done;
 	}
@@ -884,7 +882,7 @@ sds node_cluster_state(rctContext *ctx, cluster_node *node, void *data, int ispr
 	{
 		if(isprint)
 		{
-			log_stderr("error: line split error(null)!");
+			log_stdout("error: line split error(null)!");
 		}
 		goto done;
 	}
@@ -909,13 +907,13 @@ sds node_cluster_state(rctContext *ctx, cluster_node *node, void *data, int ispr
 	
 	if(isprint)
 	{
-		log_stderr("error: key_value split error or cluster_state not found!");
+		log_stdout("error: key_value split error or cluster_state not found!");
 	}
 	
 done:
 	if(isprint && cluster_state != NULL)
 	{
-		log_stderr("%s%s[%s] cluster_state is %s", format_space, 
+		log_stdout("%s%s[%s] cluster_state is %s", format_space, 
 			node_role_name(node), node->addr, 
 			cluster_state?cluster_state:"NULL");
 	}
@@ -1129,7 +1127,7 @@ void nodes_get_state(rctContext *ctx, int type)
 			(strcmp(statistics_node->role_name, 
 			RCT_REDIS_ROLE_NAME_MASTER) == 0))
 		{
-			log_stderr("");
+			log_stdout("");
 		}
 		
 		switch(state_type)
@@ -1150,7 +1148,7 @@ void nodes_get_state(rctContext *ctx, int type)
 				format_space[0] = '\0';
 			}
 			
-			log_stderr("%s%s[%s] has %d keys\t%d%s", format_space, 
+			log_stdout("%s%s[%s] has %d keys\t%d%s", format_space, 
 				statistics_node->role_name, statistics_node->addr, 
 				statistics_node->key_num, 
 				(statistics_node->key_num*100)/sdata.num_sum, "%");
@@ -1173,7 +1171,7 @@ void nodes_get_state(rctContext *ctx, int type)
 				format_space[0] = '\0';
 			}
 			
-			log_stderr("%s%s[%s] used %lld M\t%d%s", format_space, 
+			log_stdout("%s%s[%s] used %lld M\t%d%s", format_space, 
 				statistics_node->role_name, statistics_node->addr, 
 				statistics_node->used_memory, 
 				(statistics_node->used_memory*100)/sdata.num_sum,
@@ -1192,21 +1190,21 @@ void nodes_get_state(rctContext *ctx, int type)
 done:
 	if(ctx->simple == 0)
 	{
-		log_stderr("");
+		log_stdout("");
 	}
 	
 	switch(state_type)
 	{
 	case REDIS_KEY_NUM:
-		log_stderr("cluster has %lld keys", sdata.num_sum);
+		log_stdout("cluster has %lld keys", sdata.num_sum);
 		break;
 	case REDIS_MEMORY:
-		log_stderr("cluster used %lld M", sdata.num_sum);
+		log_stdout("cluster used %lld M", sdata.num_sum);
 		break;
 	case NODES_CLUSTER_STATE:
 		if(sdata.all_is_ok)
 		{
-			log_stderr("all nodes cluster_state is ok");
+			log_stdout("all nodes cluster_state is ok");
 		}
 		break;
 	default:
@@ -1253,13 +1251,13 @@ static int do_command_with_node(rctContext *ctx, cluster_node *node,
 		node->role == REDIS_ROLE_MASTER
 		&& ctx->simple == 0)
 	{
-		log_stderr("");
+		log_stdout("");
 	}
 	
 	c = ctx_get_by_node(node, NULL, cc->flags);
 	if(c == NULL)
 	{	
-		log_stderr("%s[%s] get connect failed", 
+		log_stdout("%s[%s] get connect failed", 
 			node_role_name(node), node->addr);
 		return RCT_ERROR;
 	}
@@ -1268,13 +1266,13 @@ static int do_command_with_node(rctContext *ctx, cluster_node *node,
 
 	if(reply == NULL)
 	{
-		log_stderr("%s[%s] %s failed(reply is NULL)!", 
+		log_stdout("%s[%s] %s failed(reply is NULL)!", 
 			node_role_name(node), node->addr, command);
 		goto error;
 	}
 	else if(reply->type == REDIS_REPLY_ERROR)
 	{
-		log_stderr("%s[%s] %s failed(%s)!", node_role_name(node),
+		log_stdout("%s[%s] %s failed(%s)!", node_role_name(node),
 			node->addr, command, reply->str);
 		goto error;
 	}
@@ -1287,7 +1285,7 @@ static int do_command_with_node(rctContext *ctx, cluster_node *node,
 		case REDIS_COMMAND_CONFIG_REWRITE:
 			if(ctx->simple == 0)
 			{
-				log_stderr("%s%s[%s] %s OK",format_space, 
+				log_stdout("%s%s[%s] %s OK",format_space, 
 					node_role_name(node), node->addr, command);
 			}
 			break;
@@ -1300,20 +1298,20 @@ static int do_command_with_node(rctContext *ctx, cluster_node *node,
 			
 			if(reply->type != REDIS_REPLY_ARRAY)
 			{
-				log_stderr("ERR: command [%s] reply type error(want 2, but %d) for node %s.", 
+				log_stdout("ERR: command [%s] reply type error(want 2, but %d) for node %s.", 
 					command, reply->type, node->addr);
 				goto error;
 			}
 
 			if(reply->elements == 0)
 			{
-				log_stderr("ERR: node %s do not support this config [%s].", 
+				log_stdout("ERR: node %s do not support this config [%s].", 
 					node->addr, *(sds*)hiarray_get(&ctx->args, 0));
 				goto error;
 			}
 			else if(reply->elements != 2)
 			{
-				log_stderr("ERR: command [%s] reply array len error(want 2, but %d) for node %s.", 
+				log_stdout("ERR: command [%s] reply array len error(want 2, but %d) for node %s.", 
 					command, reply->elements, node->addr);
 				goto error;
 			}
@@ -1321,14 +1319,14 @@ static int do_command_with_node(rctContext *ctx, cluster_node *node,
 			sub_reply = reply->element[0];
 			if(sub_reply == NULL || sub_reply->type != REDIS_REPLY_STRING)
 			{
-				log_stderr("ERR: command [%s] reply(config name) type error(want 1, but %d) for node %s.", 
+				log_stdout("ERR: command [%s] reply(config name) type error(want 1, but %d) for node %s.", 
 					command, sub_reply->type, node->addr);
 				goto error;
 			}
 
 			if(strcmp(sub_reply->str, *(sds*)hiarray_get(&ctx->args, 0)))
 			{
-				log_stderr("ERR: command [%s] reply config name is not %s for node %s.", 
+				log_stdout("ERR: command [%s] reply config name is not %s for node %s.", 
 					command, *(sds*)hiarray_get(&ctx->args, 0), node->addr);
 				goto error;
 			}
@@ -1336,7 +1334,7 @@ static int do_command_with_node(rctContext *ctx, cluster_node *node,
 			sub_reply = reply->element[1];
 			if(sub_reply == NULL || sub_reply->type != REDIS_REPLY_STRING)
 			{
-				log_stderr("ERR: command [%s] reply(config value) type error(want 1, but %d) for node %s.", 
+				log_stdout("ERR: command [%s] reply(config value) type error(want 1, but %d) for node %s.", 
 					command, sub_reply->type, node->addr);
 				goto error;
 			}
@@ -1346,7 +1344,7 @@ static int do_command_with_node(rctContext *ctx, cluster_node *node,
 				long long memory_num = rct_atoll(reply->element[1]->str, reply->element[1]->len);
 				if(ctx->simple == 0)
 				{
-					log_stderr("%s%s[%s] config %s is %s (%lldMB)", format_space, node_role_name(node), 
+					log_stdout("%s%s[%s] config %s is %s (%lldMB)", format_space, node_role_name(node), 
 						node->addr, reply->element[0]->str, reply->element[1]->str, 
 						memory_num/(1024*1024));
 				}
@@ -1354,7 +1352,7 @@ static int do_command_with_node(rctContext *ctx, cluster_node *node,
 			}
 			else if(ctx->simple == 0)
 			{
-				log_stderr("%s%s[%s] config %s is %s", format_space, node_role_name(node), 
+				log_stdout("%s%s[%s] config %s is %s", format_space, node_role_name(node), 
 					node->addr, reply->element[0]->str, reply->element[1]->str);
 			}
 			
@@ -1458,7 +1456,7 @@ void do_command_node_by_node(rctContext *ctx, int type)
 		command = sdsnew("flushall");
 		if(command == NULL)
 		{
-			log_stderr("ERR: out of memory.");
+			log_stdout("ERR: out of memory.");
 			goto done;
 		}
 		break;
@@ -1466,14 +1464,14 @@ void do_command_node_by_node(rctContext *ctx, int type)
 		command = sdsnew("config get ");
 		if(command == NULL)
 		{
-			log_stderr("ERR: out of memory.");
+			log_stdout("ERR: out of memory.");
 			goto done;
 		}
 
 		command = sdscatsds(command, *(sds*)hiarray_get(&ctx->args, 0));
 		if(command == NULL)
 		{
-			log_stderr("ERR: out of memory.");
+			log_stdout("ERR: out of memory.");
 			goto done;
 		}
 
@@ -1486,28 +1484,28 @@ void do_command_node_by_node(rctContext *ctx, int type)
 		command = sdsnew("config set ");
 		if(command == NULL)
 		{
-			log_stderr("ERR: out of memory.");
+			log_stdout("ERR: out of memory.");
 			goto done;
 		}
 
 		command = sdscatsds(command, *(sds*)hiarray_get(&ctx->args, 0));
 		if(command == NULL)
 		{
-			log_stderr("ERR: out of memory.");
+			log_stdout("ERR: out of memory.");
 			goto done;
 		}
 
 		command = sdscat(command, " ");
 		if(command == NULL)
 		{
-			log_stderr("ERR: out of memory.");
+			log_stdout("ERR: out of memory.");
 			goto done;
 		}
 
 		command = sdscatsds(command, *(sds*)hiarray_get(&ctx->args, 1));
 		if(command == NULL)
 		{
-			log_stderr("ERR: out of memory.");
+			log_stdout("ERR: out of memory.");
 			goto done;
 		}
 		
@@ -1516,7 +1514,7 @@ void do_command_node_by_node(rctContext *ctx, int type)
 		command = sdsnew("config rewrite");
 		if(command == NULL)
 		{
-			log_stderr("ERR: out of memory.");
+			log_stdout("ERR: out of memory.");
 			goto done;
 		}
 		
@@ -1573,11 +1571,11 @@ void do_command_node_by_node(rctContext *ctx, int type)
 	case REDIS_COMMAND_CONFIG_REWRITE:
 		if(all_is_ok)
 		{
-			log_stderr("\nOK");
+			log_stdout("\nOK");
 		}
 		else
 		{
-			log_stderr("\nOthers is OK");
+			log_stdout("\nOthers is OK");
 		}
 		
 		break;
@@ -1585,7 +1583,7 @@ void do_command_node_by_node(rctContext *ctx, int type)
 
 		if(ctx->simple == 0)
 		{
-			log_stderr("");
+			log_stdout("");
 		}
 		
 		if(all_is_ok)
@@ -1594,19 +1592,19 @@ void do_command_node_by_node(rctContext *ctx, int type)
 			{
 				if(strcmp("maxmemory", *(sds*)hiarray_get(&ctx->args, 0)) == 0)
 				{
-					log_stderr("All nodes config %s are Consistent: %s (%lldMB)",
+					log_stdout("All nodes config %s are Consistent: %s (%lldMB)",
 						*(sds*)hiarray_get(&ctx->args, 0), data.compare_value,
 						rct_atoll(data.compare_value, sdslen(data.compare_value))/(1024*1024));
 				}
 				else
 				{
-					log_stderr("All nodes config %s are Consistent: %s",
+					log_stdout("All nodes config %s are Consistent: %s",
 						*(sds*)hiarray_get(&ctx->args, 0), data.compare_value);
 				}
 			}
 			else
 			{
-				log_stderr("Nodes config are Inconsistent");
+				log_stdout("Nodes config are Inconsistent");
 			}
 		}
 		else
@@ -1615,25 +1613,25 @@ void do_command_node_by_node(rctContext *ctx, int type)
 			{
 				if(strcmp("maxmemory", *(sds*)hiarray_get(&ctx->args, 0)) == 0)
 				{
-					log_stderr("Other nodes config %s are Consistent: %s (%lldMB)",
+					log_stdout("Other nodes config %s are Consistent: %s (%lldMB)",
 						*(sds*)hiarray_get(&ctx->args, 0), data.compare_value,
 						rct_atoll(data.compare_value, sdslen(data.compare_value))/(1024*1024));
 				}
 				else
 				{
-					log_stderr("Other nodes config %s are Consistent: %s",
+					log_stdout("Other nodes config %s are Consistent: %s",
 						*(sds*)hiarray_get(&ctx->args, 0), data.compare_value);
 				}
 			}
 			else
 			{
-				log_stderr("Other nodes config are Inconsistent");
+				log_stdout("Other nodes config are Inconsistent");
 			}
 		}
 		
 		if(strcmp("maxmemory", *(sds*)hiarray_get(&ctx->args, 0)) == 0)
 		{
-			log_stderr("cluster total maxmemory: %lld (%lldMB)", data.sum, data.sum/(1024*1024));
+			log_stdout("cluster total maxmemory: %lld (%lldMB)", data.sum, data.sum/(1024*1024));
 		}
 		break;
 	
@@ -1698,7 +1696,7 @@ void do_command(rctContext *ctx, int type)
 
     	if(reply == NULL)
     	{
-        	printf("reply is null[%s]\n", cc->errstr);
+        	log_stdout("reply is null[%s]", cc->errstr);
 			reply_null_count ++;
         	continue;
     	}
@@ -1707,7 +1705,6 @@ void do_command(rctContext *ctx, int type)
 		{
 		case REDIS_REPLY_STRING:
 			
-			//printf("%s\n", reply->str);
 			if(rct_atoi(reply->str) == i)
 			{
 				equal_count ++;
@@ -1721,11 +1718,10 @@ void do_command(rctContext *ctx, int type)
 			break;
 		case REDIS_REPLY_NIL:
 			null_count ++;
-			//printf("null\n");
+			
 			break;
 		case REDIS_REPLY_STATUS:
 		
-			//printf("%s\n", reply->str);
 			if(strcmp(reply->str, "OK") == 0)
 			{
 				ok_count ++;
@@ -1733,7 +1729,7 @@ void do_command(rctContext *ctx, int type)
 			break;
 		case REDIS_REPLY_ERROR:
 			error_count ++;
-			printf("%s\n", reply->str);
+			log_stdout("%s", reply->str);
 			break;
 		default:
 			break;
@@ -1742,11 +1738,11 @@ void do_command(rctContext *ctx, int type)
 		reply = NULL;
 	}
 	
-	printf("null_count: %d\n", null_count);
-	printf("ok_count: %d\n", ok_count);
-	printf("equal_count: %d\n", equal_count);
-	printf("error_count: %d\n", error_count);
-	printf("reply_null_count: %d\n", reply_null_count);
+	log_stdout("null_count: %d", null_count);
+	log_stdout("ok_count: %d", ok_count);
+	log_stdout("equal_count: %d", equal_count);
+	log_stdout("error_count: %d", error_count);
+	log_stdout("reply_null_count: %d", reply_null_count);
 
 done:
 	
@@ -1791,7 +1787,7 @@ int core_core(rctContext *ctx)
 	//cc = redisClusterConnectAllWithTimeout(addr, timeout, flags);
 	if(cc == NULL || cc->err)
 	{
-		printf("connect error : %s\n", cc == NULL ? "NULL" : cc->errstr);
+		log_stdout("connect error : %s", cc == NULL ? "NULL" : cc->errstr);
 		goto done;
 	}
 
@@ -1803,7 +1799,7 @@ int core_core(rctContext *ctx)
 	di = dictFind(ctx->commands, ctx->cmd);
 	if(di == NULL)
 	{
-		log_stderr("ERR: command [%s] not found, please read the help.", ctx->cmd);
+		log_stdout("ERR: command [%s] not found, please read the help.", ctx->cmd);
 		return RCT_ERROR;
 	}
 
@@ -1815,7 +1811,7 @@ int core_core(rctContext *ctx)
 
 	if(command->flag & CMD_FLAG_NEED_CONFIRM)
 	{
-		log_stderr("Do you really do the %s?", command->name);
+		log_stdout("Do you really do the %s?", command->name);
 		char confirm_input[5] = {0};
 		int confirm_retry = 0;
 
@@ -1828,13 +1824,13 @@ int core_core(rctContext *ctx)
 
 			if(confirm_retry > 3)
 			{
-				log_stderr("ERR: Your input is always error!");
+				log_stdout("ERR: Your input is always error!");
 				return RCT_OK;
 			}
 			
 			memset(confirm_input, '\0', 5);
 			
-			log_stderr("please input \"yes\" or \"no\" :");
+			log_stdout("please input \"yes\" or \"no\" :");
 			scanf("%s", &confirm_input);
 			confirm_retry ++;
 		}
@@ -1845,16 +1841,16 @@ int core_core(rctContext *ctx)
 	{
 		if(command->max_arg_count == 0)
 		{
-			log_stderr("ERR: command [%s] can not have argumemts", ctx->cmd);
+			log_stdout("ERR: command [%s] can not have argumemts", ctx->cmd);
 		}
 		else if(command->max_arg_count == command->min_arg_count)
 		{
-			log_stderr("ERR: command [%s] must have %d argumemts.", 
+			log_stdout("ERR: command [%s] must have %d argumemts.", 
 				ctx->cmd, command->min_arg_count);
 		}
 		else
 		{
-			log_stderr("ERR: the argumemts number for command [%s] must between %d and %d.", 
+			log_stdout("ERR: the argumemts number for command [%s] must between %d and %d.", 
 				ctx->cmd, command->min_arg_count, command->max_arg_count);
 		}
 		return RCT_ERROR;

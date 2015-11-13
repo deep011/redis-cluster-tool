@@ -43,7 +43,7 @@ rct_show_command_usage(void)
 
 	numcommands = sizeof(rctCommandTable)/sizeof(RCTCommand);
 
-	log_stderr("Commands:");
+	log_stdout("Commands:");
 
     for (j = 0; j < numcommands; j++) {
 		c = rctCommandTable+j;
@@ -57,7 +57,7 @@ rct_show_command_usage(void)
 		memset(command_name_with_space, ' ', COMMAND_NAME_MAX_LENGTH);
 		command_name_with_space[COMMAND_NAME_MAX_LENGTH] = '\0';
 		memcpy(command_name_with_space, c->name, command_name_len);
-		log_stderr("    %s:%s", command_name_with_space, c->description);		
+		log_stdout("    %s:%s", command_name_with_space, c->description);		
     }
 }
 

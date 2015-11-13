@@ -219,6 +219,33 @@ _log_stderr(const char *fmt, ...)
     errno = errno_save;
 }
 
+void
+_log_stdout(const char *fmt, ...)
+{
+    struct logger *l = &logger;
+    int len, size, errno_save;
+    char buf[4 * LOG_MAX_LEN];
+    va_list args;
+    ssize_t n;
+
+    errno_save = errno;
+    len = 0;                /* length of output buffer */
+    size = 4 * LOG_MAX_LEN; /* size of output buffer */
+
+    va_start(args, fmt);
+    len += rct_vscnprintf(buf, size, fmt, args);
+    va_end(args);
+
+    buf[len++] = '\n';
+
+    n = rct_write(STDOUT_FILENO, buf, len);
+    if (n < 0) {
+        l->nerror++;
+    }
+
+    errno = errno_save;
+}
+
 /*
  * Hexadecimal dump in the canonical hex + ascii display
  * See -C option in man hexdump
