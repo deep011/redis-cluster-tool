@@ -65,7 +65,7 @@ If you want to support other OS packages, please contact with me.
         cluster_config_set            :Set config to every node in the cluster.
         cluster_config_rewrite        :Rewrite every node config to echo node for the cluster.
         node_list                     :List the nodes
-        del_keys                      :Delete keys in the cluster. The keys must match a given glob-style pattern.
+        del_keys                      :Delete keys in the cluster. The keys must match a given glob-style pattern.(This command not block the redis)
         
 ## Explanation
 
