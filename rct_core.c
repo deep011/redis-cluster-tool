@@ -2684,7 +2684,7 @@ int core_core(rctContext *ctx)
 
     if(command->flag & CMD_FLAG_NEED_CONFIRM)
     {
-        log_stdout("Do you really do the %s?", command->name);
+        log_stdout("Do you really want to execute the \"%s\"?", command->name);
         char confirm_input[5] = {0};
         int confirm_retry = 0;
 

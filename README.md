@@ -110,6 +110,10 @@ Then you can use "redis-trib.rb reshard --yes --from e1a4ba9922555bfc961f987213e
 **Flushall the cluster:**
 
     $redis-cluster-tool -a 127.0.0.1:34501 -C flushall -s
+    Do you really want to execute the "flushall"?
+    please input "yes" or "no" :
+    
+    yes
     OK
 
 
@@ -128,12 +132,16 @@ Then you can use "redis-trib.rb reshard --yes --from e1a4ba9922555bfc961f987213e
 **Set a config from every node in cluster:**
 
     $redis-cluster-tool -a 127.0.0.1:34501 -C "cluster_config_set maxmemory 10000000" -s
+    Do you really want to execute the "cluster_config_set"?
+    please input "yes" or "no" :
+    yes
+    
     OK
 
-**delete keys in the cluster:**
+**Delete keys in the cluster:**
 
     $redis-cluster-tool -a 127.0.0.1:34501 -C "del_keys 1*"
-    Do you really do the del_keys?
+    Do you really want to execute the "del_keys"?
     please input "yes" or "no" :
     yes
     delete keys job is running...
