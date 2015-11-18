@@ -2,15 +2,15 @@
 #ifndef _RCT_LOG_H_
 #define _RCT_LOG_H_
 
-#define LOG_ROTATE_DEFAULT			0
+#define LOG_ROTATE_DEFAULT          0
 
-#define LOG_FILE_MAX_SIZE_DEFAULT	1073741824
-#define LOG_FILE_MAX_SIZE_MIN		1000000
-#define LOG_FILE_MAX_SIZE_MAX		1122601371959296
+#define LOG_FILE_MAX_SIZE_DEFAULT   1073741824
+#define LOG_FILE_MAX_SIZE_MIN       1000000
+#define LOG_FILE_MAX_SIZE_MAX       1122601371959296
 
-#define LOG_FILE_COUNT_DEFAULT		10
-#define LOG_FILE_COUNT_MIN			-1
-#define LOG_FILE_COUNT_MAX			LOG_FILES_CIRCULAR_MAX_LEN
+#define LOG_FILE_COUNT_DEFAULT      10
+#define LOG_FILE_COUNT_MIN          -1
+#define LOG_FILE_COUNT_MAX          LOG_FILES_CIRCULAR_MAX_LEN
 
 /*  LOG_RORATE
   *  0 : twemproxy do not use log rotate functionality.
@@ -24,7 +24,7 @@ extern ssize_t LOG_FIEL_MAX_SIZE_FOR_ROTATING;
   *  =0 : there is no log bak files, only current log file exist.
   *  >0 : use log_files_circular, and only stay newest N log bak files.
   */
-extern int		LOG_FILE_COUNT_TO_STAY;
+extern int      LOG_FILE_COUNT_TO_STAY;
 #define LOG_FILES_CIRCULAR_MAX_LEN 200
 
 struct logger {
@@ -33,10 +33,10 @@ struct logger {
     int  fd;     /* log file descriptor */
     int  nerror; /* # log error */
 
-	ssize_t  current_log_size; /* log current size */
-	char*  log_files_circular[LOG_FILES_CIRCULAR_MAX_LEN];	/* we allow stay LOG_FILE_COUNT_TO_STAY log files */
-	int circular_cur_pos; /* the current position for the circular */
-	bool circular_full; /* the log_files_circular already had LOG_FILE_COUNT_TO_STAY elements*/
+    ssize_t  current_log_size; /* log current size */
+    char*  log_files_circular[LOG_FILES_CIRCULAR_MAX_LEN];  /* we allow stay LOG_FILE_COUNT_TO_STAY log files */
+    int circular_cur_pos; /* the current position for the circular */
+    bool circular_full; /* the log_files_circular already had LOG_FILE_COUNT_TO_STAY elements*/
 };
 
 #define LOG_EMERG   0   /* system in unusable */
@@ -51,6 +51,10 @@ struct logger {
 #define LOG_VVERB   9   /* verbose messages on crack */
 #define LOG_VVVERB  10  /* verbose messages on ganga */
 #define LOG_PVERB   11  /* periodic verbose messages on crack */
+
+#define RCT_LOG_DEFAULT     LOG_NOTICE
+#define RCT_LOG_MIN         LOG_EMERG
+#define RCT_LOG_MAX         LOG_PVERB
 
 #define LOG_MAX_LEN 256 /* max length of log message */
 

@@ -1,10 +1,9 @@
+#include<unistd.h>
+
 #include "rct_core.h"
 
 #define RCT_CONF_PATH        	"conf/rct.yml"
 
-#define RCT_LOG_DEFAULT      	LOG_NOTICE
-#define RCT_LOG_MIN          	LOG_EMERG
-#define RCT_LOG_MAX          	LOG_PVERB
 #define RCT_LOG_PATH         	NULL
 
 #define RCT_ADDR             	"127.0.0.1:6379"
@@ -16,11 +15,16 @@
 
 #define RCT_OPTION_REDIS_ROLE_DEFAULT	RCT_OPTION_REDIS_ROLE_ALL
 
+#define RCT_OPTION_THREAD_COUNT_DEFAULT	sysconf(_SC_NPROCESSORS_ONLN)
+
+#define RCT_OPTION_BUFFER_DEFAULT		1024*1024
+
 
 static struct option long_options[] = {
     { "help",           no_argument,        NULL,   'h' },
     { "version",        no_argument,        NULL,   'V' },
     { "daemonize",      no_argument,        NULL,   'd' },
+    { "simple",        	no_argument,        NULL,   's' },
     { "output",         required_argument,  NULL,   'o' },
     { "verbose",        required_argument,  NULL,   'v' },
     { "conf-file",      required_argument,  NULL,   'c' },
@@ -29,11 +33,12 @@ static struct option long_options[] = {
     { "pid-file",       required_argument,  NULL,   'p' },
     { "command",        required_argument,  NULL,   'C' },
     { "role",        	required_argument,  NULL,   'r' },
-    { "simple",        	required_argument,  NULL,   's' },
+    { "thread",        	required_argument,  NULL,   't' },
+    { "buffer",        	required_argument,  NULL,   'b' },
     { NULL,             0,                  NULL,    0  }
 };
 
-static char short_options[] = "hVdo:v:c:a:i:p:C:r:s";
+static char short_options[] = "hVdo:v:c:a:i:p:C:r:st:b:";
 
 void
 rct_show_usage(void)
@@ -42,6 +47,7 @@ rct_show_usage(void)
         "Usage: redis-cluster-tool [-?hVds] [-v verbosity level] [-o output file]" CRLF
         "                  [-c conf file] [-a addr] [-i interval]" CRLF
         "                  [-p pid file] [-C command] [-r redis role]" CRLF
+        "                  [-t thread number] [-b buffer size]" CRLF
         "");
     log_stderr(
         "Options:" CRLF
@@ -58,6 +64,8 @@ rct_show_usage(void)
         "  -p, --pid-file=S       : set pid file (default: %s)" CRLF
         "  -C, --command=S        : set command to execute (default: %s)" CRLF
         "  -r, --role=S           : set the role of the nodes that command to execute on (default: %s, you can input: %s, %s or %s)" CRLF
+        "  -t, --thread=N         : set how many threads to run the job(default: %d)" CRLF
+        "  -b, --buffer=S         : set buffer size to run the job (default: %lld byte, unit:G/M/K)" CRLF
         "",
         RCT_LOG_DEFAULT, RCT_LOG_MIN, RCT_LOG_MAX,
         RCT_LOG_PATH != NULL ? RCT_LOG_PATH : "stderr",
@@ -69,7 +77,9 @@ rct_show_usage(void)
         RCT_OPTION_REDIS_ROLE_DEFAULT,
         RCT_OPTION_REDIS_ROLE_ALL,
         RCT_OPTION_REDIS_ROLE_MASTER,
-        RCT_OPTION_REDIS_ROLE_SLAVE);
+        RCT_OPTION_REDIS_ROLE_SLAVE,
+        RCT_OPTION_THREAD_COUNT_DEFAULT,
+        RCT_OPTION_BUFFER_DEFAULT);
 
 	rct_show_command_usage();
 }
@@ -107,12 +117,15 @@ rct_set_default_options(struct instance *nci)
     nci->start = 0;
     nci->end = 0;
 	nci->simple = 0;
+    nci->thread_count = RCT_OPTION_THREAD_COUNT_DEFAULT;
+    nci->buffer_size = RCT_OPTION_BUFFER_DEFAULT;
 }
 
 r_status
 rct_get_options(int argc, char **argv, struct instance *nci)
 {
     int c, value;
+    uint64_t big_value;
 
 	if(argc <= 1)
 	{
@@ -199,6 +212,27 @@ rct_get_options(int argc, char **argv, struct instance *nci)
 		case 's':
 			nci->simple = 1;
 			break;
+
+        case 't':
+            value = rct_atoi(optarg);
+            if (value < 0) {
+                log_stderr("redis-cluster-tool: option -t requires a number");
+                return RCT_ERROR;
+            }
+            
+            nci->thread_count = value;
+            break;
+            
+        case 'b':
+            big_value = size_string_to_integer_byte(optarg, strlen(optarg));
+            if(big_value == 0)
+            {
+                log_stderr("redis-cluster-tool: option -b requires a memory size");
+                return RCT_ERROR;
+            }
+
+            nci->buffer_size = big_value;
+            break;
 			
         case '?':
             switch (optopt) {
@@ -211,12 +245,14 @@ rct_get_options(int argc, char **argv, struct instance *nci)
 
             case 'v':
             case 'i':
+			case 't':
                 log_stderr("redis-cluster-tool: option -%c requires a number", optopt);
                 break;
 
             case 'a':
 			case 'C':
 			case 'r':
+			case 'b':
                 log_stderr("redis-cluster-tool: option -%c requires a string", optopt);
                 break;
 

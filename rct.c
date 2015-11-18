@@ -27,129 +27,132 @@ void dictSdsDestructor(void *privdata, void *val)
 
 
 dictType commandTableDictType = {
-    dictSdsHash,   	   			/* hash function */
-    NULL,                      	/* key dup */
-    NULL,                      	/* val dup */
-    dictSdsKeyCompare,     		/* key compare */
-    dictSdsDestructor,         	/* key destructor */
-    NULL                       	/* val destructor */
+    dictSdsHash,                /* hash function */
+    NULL,                       /* key dup */
+    NULL,                       /* val dup */
+    dictSdsKeyCompare,          /* key compare */
+    dictSdsDestructor,          /* key destructor */
+    NULL                        /* val destructor */
 };
 
 rctContext *
 init_context(struct instance *nci)
 {
-	int ret;
-	int j;
-	rctContext *rct_ctx;
-	dict *commands;
-	sds *cmd_parts = NULL;
-	int cmd_parts_count = 0;
-	sds *arg_addr;
+    int ret;
+    int j;
+    rctContext *rct_ctx;
+    dict *commands;
+    sds *cmd_parts = NULL;
+    int cmd_parts_count = 0;
+    sds *arg_addr;
 
-	if(nci == NULL)
-	{
-		return NULL;
-	}
+    if(nci == NULL)
+    {
+        return NULL;
+    }
 
-	rct_ctx = rct_alloc(sizeof(rctContext));
-	if(rct_ctx == NULL)
-	{
-		return NULL;
-	}
+    rct_ctx = rct_alloc(sizeof(rctContext));
+    if(rct_ctx == NULL)
+    {
+        return NULL;
+    }
 
-	rct_ctx->cc = NULL;
+    rct_ctx->cc = NULL;
 
-	commands = dictCreate(&commandTableDictType,NULL);
-	if(commands == NULL)
-	{
-		rct_free(rct_ctx);
-		return NULL;
-	}
+    commands = dictCreate(&commandTableDictType,NULL);
+    if(commands == NULL)
+    {
+        rct_free(rct_ctx);
+        return NULL;
+    }
 
-	populateCommandTable(commands);
-	rct_ctx->commands = commands;
+    populateCommandTable(commands);
+    rct_ctx->commands = commands;
 
-	rct_ctx->address = nci->addr;
+    rct_ctx->address = nci->addr;
 
-	cmd_parts = sdssplitlen(nci->command, strlen(nci->command), " ", 1, &cmd_parts_count);
-	if(cmd_parts == NULL || cmd_parts_count <= 0)
-	{
-		rct_free(rct_ctx);
-		dictRelease(commands);
-		return NULL;
-	}
-	
-	rct_ctx->cmd = cmd_parts[0];
+    cmd_parts = sdssplitlen(nci->command, strlen(nci->command), " ", 1, &cmd_parts_count);
+    if(cmd_parts == NULL || cmd_parts_count <= 0)
+    {
+        rct_free(rct_ctx);
+        dictRelease(commands);
+        return NULL;
+    }
+    
+    rct_ctx->cmd = cmd_parts[0];
 
-	ret = hiarray_init(&rct_ctx->args, 1, sizeof(sds));
-	if(ret != RCT_OK)
-	{
-		sdsfreesplitres(cmd_parts, cmd_parts_count);
-		rct_free(rct_ctx);
-		dictRelease(commands);
-		return NULL;
-	}
-	
-	for(j = 1; j < cmd_parts_count; j++)
-	{
-		arg_addr = hiarray_push(&rct_ctx->args);
-		*arg_addr = cmd_parts[j];
-	}
+    ret = hiarray_init(&rct_ctx->args, 1, sizeof(sds));
+    if(ret != RCT_OK)
+    {
+        sdsfreesplitres(cmd_parts, cmd_parts_count);
+        rct_free(rct_ctx);
+        dictRelease(commands);
+        return NULL;
+    }
+    
+    for(j = 1; j < cmd_parts_count; j++)
+    {
+        arg_addr = hiarray_push(&rct_ctx->args);
+        *arg_addr = cmd_parts[j];
+    }
 
-	free(cmd_parts);
+    free(cmd_parts);
 
-	if(strcmp(nci->role, RCT_OPTION_REDIS_ROLE_ALL) == 0)
-	{
-		rct_ctx->redis_role = RCT_REDIS_ROLE_ALL;
-	}
-	else if(strcmp(nci->role, RCT_OPTION_REDIS_ROLE_MASTER) == 0)
-	{
-		rct_ctx->redis_role = RCT_REDIS_ROLE_MASTER;
-	}
-	else if(strcmp(nci->role, RCT_OPTION_REDIS_ROLE_SLAVE) == 0)
-	{
-		rct_ctx->redis_role = RCT_REDIS_ROLE_SLAVE;
-	}
-	else
-	{
-		rct_ctx->redis_role = RCT_REDIS_ROLE_NULL;
-	}
+    if(strcmp(nci->role, RCT_OPTION_REDIS_ROLE_ALL) == 0)
+    {
+        rct_ctx->redis_role = RCT_REDIS_ROLE_ALL;
+    }
+    else if(strcmp(nci->role, RCT_OPTION_REDIS_ROLE_MASTER) == 0)
+    {
+        rct_ctx->redis_role = RCT_REDIS_ROLE_MASTER;
+    }
+    else if(strcmp(nci->role, RCT_OPTION_REDIS_ROLE_SLAVE) == 0)
+    {
+        rct_ctx->redis_role = RCT_REDIS_ROLE_SLAVE;
+    }
+    else
+    {
+        rct_ctx->redis_role = RCT_REDIS_ROLE_NULL;
+    }
 
-	if(nci->simple)
-	{
-		rct_ctx->simple = 1;
-	}
-	else
-	{
-		rct_ctx->simple = 0;
-	}
-	
-	return rct_ctx;
+    if(nci->simple)
+    {
+        rct_ctx->simple = 1;
+    }
+    else
+    {
+        rct_ctx->simple = 0;
+    }
+
+    rct_ctx->buffer_size = nci->buffer_size;
+    rct_ctx->thread_count = nci->thread_count;
+    
+    return rct_ctx;
 }
 
 void destroy_context(rctContext *rct_ctx)
 {
-	while(hiarray_n(&rct_ctx->args) > 0)
-	{
-		sds *arg = hiarray_pop(&rct_ctx->args);
-		sdsfree(*arg);
-	}
-	hiarray_deinit(&rct_ctx->args);
-	
-	
-	sdsfree(rct_ctx->cmd);
-	dictRelease(rct_ctx->commands);
-	rct_free(rct_ctx);
+    while(hiarray_n(&rct_ctx->args) > 0)
+    {
+        sds *arg = hiarray_pop(&rct_ctx->args);
+        sdsfree(*arg);
+    }
+    hiarray_deinit(&rct_ctx->args);
+    
+    
+    sdsfree(rct_ctx->cmd);
+    dictRelease(rct_ctx->commands);
+    rct_free(rct_ctx);
 }
 
 int main(int argc,char *argv[])
 {
     r_status status;
     struct instance nci;
-	rctContext *rct_ctx;
+    rctContext *rct_ctx;
 
-	rct_set_default_options(&nci);
-	
+    rct_set_default_options(&nci);
+    
     status = rct_get_options(argc, argv, &nci);
     if (status != RCT_OK) {
         rct_show_usage();
@@ -165,16 +168,23 @@ int main(int argc,char *argv[])
         exit(0);
     }
 
-	rct_ctx = init_context(&nci);
-	if(rct_ctx == NULL)
-	{
-		return RCT_ERROR;
-	}
-	
+    status = log_init(nci.log_level, nci.log_filename);
+    if (status != RCT_OK) {
+        return status;
+    }
+
+    log_debug(LOG_DEBUG, "log enabled");
+
+    rct_ctx = init_context(&nci);
+    if(rct_ctx == NULL)
+    {
+        return RCT_ERROR;
+    }
+    
     core_core(rct_ctx);
 
-	destroy_context(rct_ctx);
+    destroy_context(rct_ctx);
 
-	return RCT_OK;
+    return RCT_OK;
 }
 

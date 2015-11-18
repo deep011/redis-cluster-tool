@@ -34,20 +34,23 @@ If you want to support other OS packages, please contact with me.
     Usage: redis-cluster-tool [-?hVds] [-v verbosity level] [-o output file]
                   [-c conf file] [-a addr] [-i interval]
                   [-p pid file] [-C command] [-r redis role]
+                  [-t thread number] [-b buffer size]
 
     Options:
-    -h, --help             : this help
-    -V, --version          : show version and exit
-    -d, --daemonize        : run as a daemon
-    -s, --simple           : show the output not in detail
-    -v, --verbosity=N      : set logging level (default: 5, min: 0, max: 11)
-    -o, --output=S         : set logging file (default: stderr)
-    -c, --conf-file=S      : set configuration file (default: conf/rct.yml)
-    -a, --addr=S           : set redis cluster address (default: 127.0.0.1:6379)
-    -i, --interval=N       : set interval in msec (default: 1000 msec)
-    -p, --pid-file=S       : set pid file (default: off)
-    -C, --command=S        : set command to execute (default: cluster_state)
-    -r, --role=S           : set the role of the nodes that command to execute on (default: all, you can input: all, master or slave)
+      -h, --help             : this help
+      -V, --version          : show version and exit
+      -d, --daemonize        : run as a daemon
+      -s, --simple           : show the output not in detail
+      -v, --verbosity=N      : set logging level (default: 5, min: 0, max: 11)
+      -o, --output=S         : set logging file (default: stderr)
+      -c, --conf-file=S      : set configuration file (default: conf/rct.yml)
+      -a, --addr=S           : set redis cluster address (default: 127.0.0.1:6379)
+      -i, --interval=N       : set interval in msec (default: 1000 msec)
+      -p, --pid-file=S       : set pid file (default: off)
+      -C, --command=S        : set command to execute (default: cluster_state)
+      -r, --role=S           : set the role of the nodes that command to execute on (default: all, you can input: all, master or slave)
+      -t, --thread=N         : set how many threads to run the job(default: 8)
+      -b, --buffer=S         : set buffer size to run the job (default: 1048576 byte, unit:G/M/K)
     
     Commands:
         cluster_state                 :Show the cluster state.
@@ -62,6 +65,7 @@ If you want to support other OS packages, please contact with me.
         cluster_config_set            :Set config to every node in the cluster.
         cluster_config_rewrite        :Rewrite every node config to echo node for the cluster.
         node_list                     :List the nodes
+        del_keys                      :Delete keys in the cluster. The keys must match a given glob-style pattern.
         
 ## Explanation
 
@@ -105,7 +109,7 @@ Then you can use "redis-trib.rb reshard --yes --from e1a4ba9922555bfc961f987213e
 
 **Flushall the cluster:**
 
-    $redis-cluster-tool -a 127.0.0.1:34501 -C flushall
+    $redis-cluster-tool -a 127.0.0.1:34501 -C flushall -s
     OK
 
 
@@ -123,9 +127,18 @@ Then you can use "redis-trib.rb reshard --yes --from e1a4ba9922555bfc961f987213e
 
 **Set a config from every node in cluster:**
 
-    $redis-cluster-tool -a 127.0.0.1:34501 -C "cluster_config_set maxmemory 10000000"
+    $redis-cluster-tool -a 127.0.0.1:34501 -C "cluster_config_set maxmemory 10000000" -s
     OK
 
+**delete keys in the cluster:**
+
+    $redis-cluster-tool -a 127.0.0.1:34501 -C "del_keys 1*"
+    Do you really do the del_keys?
+    please input "yes" or "no" :
+    yes
+    delete keys job is running...
+    delete keys job finished, deleted: 999999 keys, used: 4 s
+	
 ## License
 
 Copyright 2012 Deep, Inc.

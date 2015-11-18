@@ -372,14 +372,14 @@ _rct_dec2hex(int n,char s[])
 }
 
 
-bool
+int
 rct_valid_port(int n)
 {
     if (n < 1 || n > UINT16_MAX) {
-        return false;
+        return 0;
     }
 
-    return true;
+    return 1;
 }
 
 void *
@@ -675,11 +675,11 @@ rct_resolve_inet(char *name, int port, struct sockinfo *si)
      * the order can be tweaked for a particular system by editing
      * /etc/gai.conf
      */
-    for (cai = ai, found = false; cai != NULL; cai = cai->ai_next) {
+    for (cai = ai, found = 0; cai != NULL; cai = cai->ai_next) {
         si->family = cai->ai_family;
         si->addrlen = cai->ai_addrlen;
         rct_memcpy(&si->addr, cai->ai_addr, si->addrlen);
-        found = true;
+        found = 1;
         break;
     }
 
@@ -874,14 +874,14 @@ _safe_itoa(int base, int64_t val, char *buf)
 static const char *
 _safe_check_longlong(const char *fmt, int32_t * have_longlong)
 {
-    *have_longlong = false;
+    *have_longlong = 0;
     if (*fmt == 'l') {
         fmt++;
         if (*fmt != 'l') {
             *have_longlong = (sizeof(long) == sizeof(int64_t));
         } else {
             fmt++;
-            *have_longlong = true;
+            *have_longlong = 1;
         }
     }
     return fmt;
@@ -978,4 +978,111 @@ _safe_snprintf(char *to, size_t n, const char *fmt, ...)
     va_end(args);
     return result;
 }
+
+
+uint64_t
+size_string_to_integer_byte(char *size, int size_len)
+{
+    int i;
+    uint8_t ch;
+	uint8_t *pos;
+    uint64_t num = 0;
+	uint64_t multiple_for_unit = 1;
+	int first_nonzero_flag = 0;
+
+    if(size == NULL || size_len <= 0)
+    {
+        return 0;
+    }
+    
+	if(size_len > 2)
+	{
+		pos = size + size_len - 2;
+		if((*pos == 'G' || *pos == 'g') && (*(pos+1) == 'B' || *(pos+1) == 'b'))
+		{
+			multiple_for_unit = 1073741824;
+			size_len -= 2;
+		}
+		else if((*pos == 'M' || *pos == 'm') && (*(pos+1) == 'B' || *(pos+1) == 'b'))
+		{
+			multiple_for_unit = 1048576;
+			size_len -= 2;
+		}
+        else if((*pos == 'K' || *pos == 'k') && (*(pos+1) == 'B' || *(pos+1) == 'b'))
+		{
+			multiple_for_unit = 1024;
+			size_len -= 2;
+		}
+		else if(*(pos+1) == 'G' || *(pos+1) == 'g')
+		{
+    		multiple_for_unit = 1000000000;
+			size_len -= 1;
+		}
+		else if(*(pos+1) == 'M' || *(pos+1) == 'm')
+		{
+			multiple_for_unit = 1000000;
+			size_len -= 1;
+		}
+        else if(*(pos+1) == 'K' || *(pos+1) == 'k')
+		{
+			multiple_for_unit = 1000;
+			size_len -= 1;
+		}
+		else if(*(pos+1) == 'B' || *(pos+1) == 'b')
+		{
+			size_len -= 1;
+		}
+	}
+	else if(size_len > 1)
+	{
+		pos = size + size_len - 1;
+		if(*pos == 'G' || *pos == 'g')
+		{   
+			multiple_for_unit = 1000000000;
+			size_len -= 1;
+		}
+		else if(*pos == 'M' || *pos == 'm')
+		{   
+			multiple_for_unit = 1000000;
+			size_len -= 1;
+		}
+        else if(*pos == 'K' || *pos == 'k')
+		{   
+			multiple_for_unit = 1000000;
+			size_len -= 1;
+		}
+		else if(*pos == 'B' || *pos == 'b')
+		{
+		    size_len -= 1;
+		}
+	}
+
+	for(i = 0; i < size_len; i ++)
+	{
+		ch = *(size + i);
+		if(ch < '0' || ch > '9')
+		{
+			return 0;
+		}
+		else if(!first_nonzero_flag && ch != '0')
+		{
+			first_nonzero_flag = 1;
+		}
+		
+		if(first_nonzero_flag)
+		{
+			num = 10*num + (ch - 48);
+		}
+	}
+    
+	num *= multiple_for_unit;
+
+	if(first_nonzero_flag == 0)
+	{
+		return 0;
+	}
+
+    return num;
+}
+
 

@@ -2,6 +2,8 @@
 #define _RCT_UTIL_H_
 
 #include <stdarg.h>
+#include <sys/un.h>
+#include <netinet/in.h>
 
 #define LF                  (uint8_t) 10
 #define CR                  (uint8_t) 13
@@ -87,7 +89,7 @@ void _rct_itoa(int n, char s[]);
 char _rct_tohex(int n);
 void _rct_dec2hex(int n,char s[]);
 
-bool rct_valid_port(int n);
+int rct_valid_port(int n);
 
 /*
  * Memory allocation and free wrappers.
@@ -295,6 +297,8 @@ _rct_strrchr(uint8_t *p, uint8_t *start, uint8_t c)
 
     return NULL;
 }
+
+uint64_t size_string_to_integer_byte(char *size, int size_len);
 
 #endif
 

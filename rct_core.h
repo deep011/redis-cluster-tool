@@ -1,6 +1,8 @@
 #ifndef _RCT_CORE_H_
 #define _RCT_CORE_H_
 
+#include "config.h"
+
 #ifdef HAVE_DEBUG_LOG
 # define RCT_DEBUG_LOG 1
 #endif
@@ -38,23 +40,21 @@
 typedef int r_status; /* return type */
 typedef int err_t;     /* error type */
 
-#define RCT_REDIS_ROLE_NULL		0
-#define RCT_REDIS_ROLE_ALL		1
-#define RCT_REDIS_ROLE_MASTER	2
-#define RCT_REDIS_ROLE_SLAVE	3
+#define RCT_REDIS_ROLE_NULL     0
+#define RCT_REDIS_ROLE_ALL      1
+#define RCT_REDIS_ROLE_MASTER   2
+#define RCT_REDIS_ROLE_SLAVE    3
 
-#define RCT_REDIS_ROLE_NAME_NODE	"node"
-#define RCT_REDIS_ROLE_NAME_MASTER	"master"
-#define RCT_REDIS_ROLE_NAME_SLAVE	"slave"
+#define RCT_REDIS_ROLE_NAME_NODE    "node"
+#define RCT_REDIS_ROLE_NAME_MASTER  "master"
+#define RCT_REDIS_ROLE_NAME_SLAVE   "slave"
 
 #include <stdio.h>
 #include <time.h>
 #include <sys/types.h>
 #include <sys/socket.h>
-#include <sys/un.h>
 #include <sys/time.h>
 #include <sys/resource.h>
-#include <netinet/in.h>
 #include <ctype.h>
 #include <errno.h>
 #include <stddef.h>
@@ -65,6 +65,7 @@ typedef int err_t;     /* error type */
 #include <unistd.h>
 #include <time.h>
 #include <getopt.h>
+#include <pthread.h>
 
 #include <hircluster.h>
 #include <hiarray.h>
@@ -75,6 +76,8 @@ typedef int err_t;     /* error type */
 #include "rct_option.h"
 #include "rct_log.h"
 #include "rct_command.h"
+#include "rct_mttlist.h"
+#include "rct_locklist.h"
 
 struct instance {
     int             log_level;                   /* log level */
@@ -92,20 +95,24 @@ struct instance {
     int             daemonize;
     
     char            *command;
-	char			*role;
+    char            *role;
     uint64_t        start;
     uint64_t        end;
-	int				simple;
+    int             simple;
+    int             thread_count;
+    uint64_t        buffer_size;
 };
 
 typedef struct rctContext {
-	redisClusterContext *cc;
-	dict *commands;             /* Command table */
-	char *address;
-	char *cmd;
-	uint8_t redis_role;
-	uint8_t simple;
-	struct hiarray args;
+    redisClusterContext *cc;
+    dict *commands;             /* Command table */
+    char *address;
+    char *cmd;
+    uint8_t redis_role;
+    uint8_t simple;
+    int             thread_count;
+    uint64_t        buffer_size;
+    struct hiarray args;
 }rctContext;
 
 void nodes_get_state(rctContext *ctx, int type);
