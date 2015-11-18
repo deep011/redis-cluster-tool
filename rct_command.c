@@ -27,7 +27,7 @@ struct RCTCommand rctCommandTable[] = {
         do_command_node_by_node, REDIS_COMMAND_CONFIG_REWRITE, 0, 0, 1},
     {RCT_CMD_NODE_LIST, "List the nodes", 
         show_nodes_list, -1, 0, 0, 0},
-    {RCT_CMD_DEL_KEYS, "Delete keys in the cluster. The keys must match a given glob-style pattern.", 
+    {RCT_CMD_DEL_KEYS, "Delete keys in the cluster. The keys must match a given glob-style pattern.(This command not block the redis)", 
         cluster_del_keys, -1, 1, 1, 1}
 };
 
