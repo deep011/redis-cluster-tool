@@ -35,10 +35,11 @@ static struct option long_options[] = {
     { "role",        	required_argument,  NULL,   'r' },
     { "thread",        	required_argument,  NULL,   't' },
     { "buffer",        	required_argument,  NULL,   'b' },
+    { "step",        	required_argument,  NULL,   'S' },
     { NULL,             0,                  NULL,    0  }
 };
 
-static char short_options[] = "hVdo:v:c:a:i:p:C:r:st:b:";
+static char short_options[] = "hVdo:v:c:a:i:p:C:r:st:b:S:";
 
 void
 rct_show_usage(void)

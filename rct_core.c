@@ -1773,19 +1773,22 @@ static void *event_run(void *args)
 
 struct scan_keys_data;
 struct del_keys_data;
+static void delete_keys_job(aeEventLoop *el, int fd, void *privdata, int mask);
+static void scan_node_finish(aeEventLoop *el, int fd, void *privdata, int mask);
 
 typedef struct del_keys_node{
     rctContext *ctx;
+    cluster_node *node;
     struct scan_keys_data *scan_data;
     struct del_keys_data *del_data;
-    cluster_node *node;
-    redisAsyncContext *ac;
+    redisAsyncContext *scan_ac;
+    redisAsyncContext *del_ac;
     mttlist *keys;
     long long cursor;
     long long scan_keys_num;
     long long delete_keys_num;
     long long deleted_keys_num;
-    int sd_notice;
+    int sd_notice;  //used to notice the delete thread to delete keys
     int scan_node_finish;
 }del_keys_node;
 
@@ -1809,7 +1812,6 @@ typedef struct del_keys_data{
 void connectCallback(const redisAsyncContext *c, int status) {
     if (status != RCT_OK) {
         log_stdout("Error: %s", c->errstr);
-        //aeStop(loop);
         return;
     }
 
@@ -1843,7 +1845,8 @@ static int del_keys_node_init(del_keys_node *node_data,
     node_data->scan_keys_num = 0;
     node_data->deleted_keys_num = 0;
     node_data->sd_notice = 0;
-    node_data->ac = NULL;
+    node_data->scan_ac = NULL;
+    node_data->del_ac = NULL;
     node_data->keys = NULL;
     node_data->scan_data = NULL;
     node_data->del_data = NULL;
@@ -1855,16 +1858,26 @@ static int del_keys_node_init(del_keys_node *node_data,
         return RCT_EAGAIN;
     }
     
-    node_data->ac = redisAsyncConnect(node->host, node->port);
-    if(node_data->ac == NULL)
+    node_data->scan_ac = redisAsyncConnect(node->host, node->port);
+    if(node_data->scan_ac == NULL)
     {
-        log_stdout("error: %s[%s] get aconnect failed", 
+        log_stdout("error: %s[%s] get scan_ac failed", 
             node_role_name(node), node->addr);
         return RCT_EAGAIN;
     }
 
-    redisAsyncSetConnectCallback(node_data->ac,connectCallback);
-    redisAsyncSetDisconnectCallback(node_data->ac,disconnectCallback);
+    node_data->del_ac = redisAsyncConnect(node->host, node->port);
+    if(node_data->del_ac == NULL)
+    {
+        log_stdout("error: %s[%s] get del_ac failed", 
+            node_role_name(node), node->addr);
+        return RCT_EAGAIN;
+    }
+
+    redisAsyncSetConnectCallback(node_data->scan_ac,connectCallback);
+    redisAsyncSetDisconnectCallback(node_data->scan_ac,disconnectCallback);
+    redisAsyncSetConnectCallback(node_data->del_ac,connectCallback);
+    redisAsyncSetDisconnectCallback(node_data->del_ac,disconnectCallback);
     
     node_data->keys = mttlist_create();
     if(node_data->keys == NULL)
@@ -1896,9 +1909,16 @@ static void del_keys_node_deinit(del_keys_node *node_data)
         node_data->sd_notice = 0;
     }
 
-    if(node_data->ac != NULL)
+    if(node_data->scan_ac != NULL)
     {
-        node_data->ac = NULL;
+        redisAsyncDisconnect(node_data->scan_ac);
+        node_data->scan_ac = NULL;
+    }
+
+    if(node_data->del_ac != NULL)
+    {
+        redisAsyncDisconnect(node_data->del_ac);
+        node_data->del_ac = NULL;
     }
 
     if(node_data->keys != NULL)
@@ -1919,6 +1939,15 @@ static int scan_keys_data_init(scan_keys_data *sdata)
     sdata->finish_scan_nodes = 0;
     sdata->nodes_count = 0;
     sdata->loop = NULL;
+    sdata->nodes_data = NULL;
+
+    sdata->loop = aeCreateEventLoop(1000);
+    if(sdata->loop == NULL)
+    {
+    	log_stdout("error: create event loop failed");
+        return RCT_ERROR;
+    }
+    
 	sdata->nodes_data = listCreate();
 	if(sdata->nodes_data == NULL)
 	{
@@ -1934,6 +1963,12 @@ static void scan_keys_data_deinit(scan_keys_data *sdata)
 	if(sdata == NULL)
 	{
 		return;
+	}
+
+    if(sdata->loop != NULL)
+	{
+		aeDeleteEventLoop(sdata->loop);
+		sdata->loop = NULL;
 	}
 
 	if(sdata->nodes_data != NULL)
@@ -1955,7 +1990,7 @@ static int del_keys_data_init(del_keys_data *ddata)
     ddata->nodes_count = 0;
 	ddata->loop = NULL;
 
-	ddata->loop = aeCreateEventLoop(100);
+	ddata->loop = aeCreateEventLoop(1000);
     if(ddata->loop == NULL)
     {
     	log_stdout("error: create event loop failed");
@@ -2020,7 +2055,7 @@ static void print_scan_keys_data(scan_keys_data *sdata, int log_level)
     }
 
     log_debug(log_level, "scan_keys_data info :");
-    log_debug(log_level, "thread_id: %d", sdata->thread_id);
+    log_debug(log_level, "thread_id: %ld", sdata->thread_id);
     log_debug(log_level, "loop: %d", sdata->loop);
     log_debug(log_level, "nodes_count: %d", sdata->nodes_count);
     log_debug(log_level, "finish_scan_nodes: %d", sdata->finish_scan_nodes);
@@ -2058,7 +2093,7 @@ static void print_del_keys_data(del_keys_data *ddata, int log_level)
     }
 
 	log_debug(log_level, "del_keys_data info :");
-    log_debug(log_level, "thread_id: %d", ddata->thread_id);
+    log_debug(log_level, "thread_id: %ld", ddata->thread_id);
     log_debug(log_level, "loop: %d", ddata->loop);
     log_debug(log_level, "nodes_count: %d", ddata->nodes_count);
     log_debug(log_level, "finish_del_nodes: %d", ddata->finish_del_nodes);
@@ -2072,6 +2107,9 @@ static int scan_job_finished(scan_keys_data *scan_data)
         return 0;
     }
 
+    log_debug(LOG_DEBUG, "scan_job_finished() %d, %d", 
+        scan_data->finish_scan_nodes, scan_data->nodes_count);
+    
     if(scan_data->finish_scan_nodes >= scan_data->nodes_count)
     {
         return 1;
@@ -2087,7 +2125,8 @@ static int del_job_finished(del_keys_data *del_data)
         return 0;
     }
 
-    log_debug(LOG_DEBUG, "del_job_finished() %d, %d", del_data->finish_del_nodes, del_data->nodes_count);
+    log_debug(LOG_DEBUG, "del_job_finished() %d, %d", 
+        del_data->finish_del_nodes, del_data->nodes_count);
 
     if(del_data->finish_del_nodes >= del_data->nodes_count)
     {
@@ -2097,13 +2136,115 @@ static int del_job_finished(del_keys_data *del_data)
     return 0;
 }
 
-void delete_keys_callback(redisAsyncContext *ac, void *r, void *privdata)
+static void scan_keys_callback(redisAsyncContext *ac, void *r, void *privdata)
+{   
+    int ret;
+    int i;
+    long long cursor;
+    del_keys_node *node_data = privdata;
+    rctContext *ctx = node_data->ctx;
+    scan_keys_data *scan_data = node_data->scan_data;
+    del_keys_data *del_data = node_data->del_data;
+    cluster_node *node = node_data->node;    
+    mttlist *keys = node_data->keys;
+    int sd_notice = node_data->sd_notice;
+    redisReply *reply = r, *sub_reply;
+    int sd_notice_scan_finish;
+    
+    log_debug(LOG_VERB, "scan_keys_callback() node:%s", node->addr);
+
+    //step 1: get the cursor and keys from the scan reply.
+    if(reply == NULL)
+    {
+        log_stdout("%s[%s] %s failed(reply is NULL)!", 
+            node_role_name(node), node->addr, "scan");
+        goto done;
+    }
+    else if(reply->type == REDIS_REPLY_ERROR)
+    {
+        log_stdout("error: scan reply error(%s)", reply->str);
+        goto done;
+    }
+    
+    if(reply->type != REDIS_REPLY_ARRAY || 
+        reply->elements != 2)
+    {
+        log_stdout("error: scan reply format is wrong");
+        goto done;
+    }
+
+    sub_reply = reply->element[0];
+    if(sub_reply->type != REDIS_REPLY_STRING)
+    {
+        log_stdout("error: scan reply array first element is not integer");
+        goto done;
+    }
+
+    cursor = rct_atoll(sub_reply->str, sub_reply->len);
+    node_data->cursor = cursor;
+
+    log_debug(LOG_VERB, "cursor: %lld", cursor);
+
+    sub_reply = reply->element[1];
+    if(sub_reply->type != REDIS_REPLY_ARRAY)
+    {
+        log_stdout("error: scan reply array second element is not array");
+        goto done;
+    }
+
+    for(i = 0; i < sub_reply->elements && del_data != NULL; i ++)
+    {
+        log_debug(LOG_VERB, "key : %s", sub_reply->element[i]->str);
+        
+        mttlist_push(keys, sub_reply->element[i]->str);
+        sub_reply->element[i]->str = NULL;
+        aeCreateFileEvent(del_data->loop, sd_notice, 
+            AE_WRITABLE, delete_keys_job, node_data);
+    } 
+
+
+    //step 2: Continue to get the keys.
+    if(cursor > 0)
+    {
+        redisAsyncCommand(ac, scan_keys_callback, node_data, 
+            "scan %lld MATCH %s COUNT %d", cursor, 
+            *(sds*)hiarray_get(&ctx->args, 0), 1000);
+
+        return;
+    }
+
+done:
+
+    //step 3: end up this node scan keys.    
+    scan_data->finish_scan_nodes ++;
+    if(scan_job_finished(scan_data))
+    {
+        aeStop(scan_data->loop);
+        log_debug(LOG_NOTICE, "scan thread(%ld) stop. node[%s]", 
+            scan_data->thread_id, node->addr);
+    }
+
+    if(del_data != NULL)
+    {
+        sd_notice_scan_finish = socket(AF_INET, SOCK_STREAM, 0);
+        if (sd_notice_scan_finish < 0) 
+        {   
+            log_stdout("error: get sd_notice_finish failed");
+            return;
+        }
+
+        aeCreateFileEvent(del_data->loop, sd_notice_scan_finish,
+            AE_WRITABLE, scan_node_finish, node_data);
+    }
+}
+
+static void delete_keys_callback(redisAsyncContext *ac, void *r, void *privdata)
 {
     del_keys_node *node_data = privdata;
     del_keys_data *del_data = node_data->del_data;
     redisReply *reply = r;
 
-    log_debug(LOG_DEBUG, "delete_keys_callback() node:%s", node_data->node->addr);
+    log_debug(LOG_VERB, "delete_keys_callback() node:%s", node_data->node->addr);
 
     node_data->delete_keys_num ++;
 
@@ -2119,31 +2260,32 @@ void delete_keys_callback(redisAsyncContext *ac, void *r, void *privdata)
             node_data->scan_keys_num) && 
             mttlist_empty(node_data->keys))
         {
-            redisAsyncDisconnect(ac);
             del_data->finish_del_nodes ++;
             if(del_job_finished(del_data))
             {
                 aeStop(del_data->loop);
+                log_debug(LOG_NOTICE, "delete thread(%ld) stop. node[%s]", 
+                    del_data->thread_id, node_data->node->addr);
             }
-            
         }
     }
 }
 
-void delete_keys_job(aeEventLoop *el, int fd, void *privdata, int mask)
+static void delete_keys_job(aeEventLoop *el, int fd, void *privdata, int mask)
 {
     del_keys_node *node_data = privdata;
     del_keys_data *del_data = node_data->del_data;
-    redisAsyncContext *ac = node_data->ac;
+    redisAsyncContext *ac = node_data->del_ac;
     aeEventLoop *loop = del_data->loop;
     void *keys = node_data->keys;
     void *key;
 
-    log_debug(LOG_DEBUG, "delete_keys_job() node:%s", node_data->node->addr);
+    log_debug(LOG_VERB, "delete_keys_job() node:%s", node_data->node->addr);
 
     while((key = mttlist_pop(keys)) != NULL)
     {
-        log_debug(LOG_DEBUG, "key: %s", key);
+        log_debug(LOG_VERB, "key: %s", key);
+        node_data->scan_keys_num ++;
         redisAsyncCommand(ac, delete_keys_callback, node_data, "del %s", key);
         free(key);
     }
@@ -2154,23 +2296,25 @@ static void scan_node_finish(aeEventLoop *el, int fd, void *privdata, int mask)
     del_keys_node *node_data = privdata;
     del_keys_data *del_data = node_data->del_data;
 
-    log_debug(LOG_DEBUG, "scan_keys_job_finish() node:%s", node_data->node->addr);
+    log_debug(LOG_DEBUG, "scan_node_finish() node:%s", node_data->node->addr);
 
     node_data->scan_node_finish = 1;
+
+    aeDeleteFileEvent(del_data->loop, fd, AE_WRITABLE);
 
     if((node_data->delete_keys_num >= 
         node_data->scan_keys_num) && 
         mttlist_empty(node_data->keys))
     {
-        log_debug(LOG_DEBUG, "redisAsyncDisconnect() fd %d", fd);
-        aeDeleteFileEvent(del_data->loop, fd, AE_WRITABLE);
+        log_debug(LOG_INFO, "delete keys finish. fd: %d, node[%s]", 
+            fd, node_data->node->addr);
 
-        redisAsyncDisconnect(node_data->ac);
         del_data->finish_del_nodes ++;
         if(del_job_finished(del_data))
         {
             aeStop(del_data->loop);
-            log_debug(LOG_DEBUG, "aeStop() %d", del_data->thread_id);
+            log_debug(LOG_NOTICE, "delete thread(%ld) stop. node[%s]", 
+                del_data->thread_id, node_data->node->addr);
         }
     }
 
@@ -2184,17 +2328,16 @@ static long long scan_keys_job_one_node(del_keys_node *node_data)
     cluster_node *node = node_data->node;
     del_keys_data *del_data = node_data->del_data;
     aeEventLoop *del_loop = del_data->loop;
-    redisAsyncContext *ac = node_data->ac;
     redisContext *c = NULL;
     redisReply *reply = NULL, *sub_reply;
     long long cursor = node_data->cursor;
     int i;
     int done = 0;
-    mttlist *keys = node_data->keys; 
+    mttlist *keys = node_data->keys;
     int sd_notice = node_data->sd_notice;
     int ret;
 
-    log_debug(LOG_DEBUG, "scan_keys_job() node:%s", node->addr);
+    log_debug(LOG_VERB, "scan_keys_job() node:%s", node->addr);
     
     c = ctx_get_by_node(node, NULL, cc->flags);
     if(c == NULL)
@@ -2236,7 +2379,7 @@ static long long scan_keys_job_one_node(del_keys_node *node_data)
     cursor = rct_atoll(sub_reply->str, sub_reply->len);
     node_data->cursor = cursor;
 
-    log_debug(LOG_DEBUG, "cursor: %lld", cursor);
+    log_debug(LOG_VERB, "cursor: %lld", cursor);
 
     sub_reply = reply->element[1];
     if(sub_reply->type != REDIS_REPLY_ARRAY)
@@ -2245,10 +2388,9 @@ static long long scan_keys_job_one_node(del_keys_node *node_data)
         goto error;
     }
 
-    node_data->scan_keys_num += sub_reply->elements;
     for(i = 0; i < sub_reply->elements; i ++)
     {
-        log_debug(LOG_DEBUG, "key : %s", sub_reply->element[i]->str);
+        log_debug(LOG_VERB, "key : %s", sub_reply->element[i]->str);
         
         mttlist_push(keys, sub_reply->element[i]->str);
         sub_reply->element[i]->str = NULL;
@@ -2312,7 +2454,35 @@ void *scan_keys_job(void *args)
 	}
 
 }
+
+void *scan_keys_job_run(void *args)
+{
+    scan_keys_data *scan_data = args;
+    list *nodes_data = scan_data->nodes_data;  //type : del_keys_node
+    del_keys_node *node_data;
+    rctContext *ctx;
+    redisAsyncContext *ac;
+    listNode *lnode;
+    listIter *it;
+
+    it = listGetIterator(nodes_data, AL_START_HEAD);
+    while((lnode = listNext(it)) != NULL)
+    {
+    	node_data = listNodeValue(lnode);
+	    ctx = node_data->ctx;
+        ac = node_data->scan_ac;
+        
+        redisAsyncCommand(ac, scan_keys_callback, node_data, 
+            "scan %lld MATCH %s COUNT %d", node_data->cursor, 
+            *(sds*)hiarray_get(&ctx->args, 0), 1000);
+	}
     
+    listReleaseIterator(it);
+
+    aeMain(scan_data->loop);
+}
+
+
 void cluster_del_keys(rctContext *ctx, int type)
 {
     int ret;
@@ -2333,10 +2503,12 @@ void cluster_del_keys(rctContext *ctx, int type)
     del_keys_node *node_data;
 	struct hiarray *scan_datas = NULL; //type : scan_keys_data
     scan_keys_data *scan_data;
-	struct hiarray *del_datas = NULL; //type : del_keys_data
+    struct hiarray *del_datas = NULL; //type : del_keys_data
     del_keys_data *del_data;
     time_t t_start, t_end;
     long long deleted_keys_num = 0;
+    int factor; //used to assign scan thread number and delete thread number
+    int remainder_threads;
 
     if(ctx == NULL || ctx->cc == NULL)
     {
@@ -2358,7 +2530,7 @@ void cluster_del_keys(rctContext *ctx, int type)
     }
 	else if(thread_count == 1)
 	{
-		thread_count ++;
+        thread_count ++;
 	}
 
     //init the delete key node data
@@ -2404,9 +2576,20 @@ void cluster_del_keys(rctContext *ctx, int type)
         log_stdout("No node needs to delete keys");
         goto done;
     }
+
+    /*avoid scan node job too much faster 
+        than delete job and used too much memory,
+        we set factor=40 to let scan thread less 
+        than delete thread.
+       */
+    factor = 40;    
     
-	scan_threads_count = (thread_count*3)/5;
-	if(scan_threads_count > node_count)
+	scan_threads_count = (thread_count*factor)/100;
+    if(scan_threads_count <= 0)
+    {
+        scan_threads_count = 1;
+    }
+	else if(scan_threads_count > node_count)
 	{
 		scan_threads_count = node_count;
 	}
@@ -2422,11 +2605,30 @@ void cluster_del_keys(rctContext *ctx, int type)
 		delete_threads_count = node_count;
 	}
 
+    remainder_threads = thread_count - (scan_threads_count + delete_threads_count);
+    while(remainder_threads > 0)
+    {
+        if(delete_threads_count < node_count)
+        {
+            scan_threads_count ++;
+            remainder_threads --;
+        }
+        else if(scan_threads_count < node_count)
+        {
+            scan_threads_count ++;
+            remainder_threads --;
+        }
+        else
+        {
+            break;
+        }
+    }
+
 	log_debug(LOG_NOTICE, "node_count : %d", node_count);
 	log_debug(LOG_NOTICE, "thread_count : %d", thread_count);
 	log_debug(LOG_NOTICE, "scan_threads_count : %d", scan_threads_count);
 	log_debug(LOG_NOTICE, "delete_threads_count : %d", delete_threads_count);
-    log_debug(LOG_NOTICE, "");    
+    log_debug(LOG_NOTICE, "");
 
     //init the scan thread data
 	scan_datas = hiarray_create(scan_threads_count, 
@@ -2439,7 +2641,6 @@ void cluster_del_keys(rctContext *ctx, int type)
 
 	modulo = node_count/scan_threads_count;
 	remainder = node_count%scan_threads_count;
-	//add_one_count = remainder - modulo;
     add_one_count = remainder;
     begin = 0;
 	step = modulo;
@@ -2464,6 +2665,7 @@ void cluster_del_keys(rctContext *ctx, int type)
 			node_data = hiarray_get(node_datas, k);
 			listAddNodeTail(scan_data->nodes_data, node_data);
             node_data->scan_data = scan_data;
+            redisAeAttach(scan_data->loop, node_data->scan_ac);
 		}
 
 		begin += step;
@@ -2486,7 +2688,6 @@ void cluster_del_keys(rctContext *ctx, int type)
 
 	modulo = node_count/delete_threads_count;
 	remainder = node_count%delete_threads_count;
-	//add_one_count = remainder - modulo;
     add_one_count = remainder;
 	begin = 0;
 	step = modulo;
@@ -2495,7 +2696,7 @@ void cluster_del_keys(rctContext *ctx, int type)
 		step ++;
 		add_one_count --;
 	}
-	
+    
 	for(i = 0; i < delete_threads_count; i ++)
 	{
 		del_data = hiarray_push(del_datas);
@@ -2510,7 +2711,7 @@ void cluster_del_keys(rctContext *ctx, int type)
 		{
 			node_data = hiarray_get(node_datas, k);
             node_data->del_data = del_data;
-            redisAeAttach(del_data->loop, node_data->ac);
+            redisAeAttach(del_data->loop, node_data->del_ac);
 		}
 
 		begin += step;
@@ -2566,8 +2767,10 @@ void cluster_del_keys(rctContext *ctx, int type)
 	{
 		scan_data = hiarray_get(scan_datas, i);
 
-		pthread_create(&scan_data->thread_id, 
-        	NULL, scan_keys_job, scan_data->nodes_data);
+		//pthread_create(&scan_data->thread_id, 
+        //	NULL, scan_keys_job, scan_data->nodes_data);
+        pthread_create(&scan_data->thread_id, 
+        	NULL, scan_keys_job_run, scan_data);
 	}
 
     log_stdout("delete keys job is running...");
