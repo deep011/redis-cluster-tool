@@ -146,6 +146,22 @@ Then you can use "redis-trib.rb reshard --yes --from e1a4ba9922555bfc961f987213e
     yes
     delete keys job is running...
     delete keys job finished, deleted: 999999 keys, used: 4 s
+
+You can also use '-t' to set the total threads for delete keys job.
+
+Here we show a performance test:
+
+1. 45 redis nodes in cluster
+
+2. 24 threads to run the delete job(cpu has 24 threads)
+
+3. Nine hundred million keys in the redis cluster
+
+4. delete two hundred million keys
+
+del_keys job used 92 seconds(about two million keys per second)
+
+The del_keys job can be speed up with lock-free list in the future.
 	
 ## License
 
