@@ -4,6 +4,8 @@
 #define RCT_CMD_CLUSTER_STATE			"cluster_state"
 #define RCT_CMD_CLUSTER_KEYS_NUM		"cluster_keys_num"
 #define RCT_CMD_CLUSTER_USED_MEMORY		"cluster_used_memory"
+#define RCT_CMD_CLUSTER_NODE_INFO		"cluster_node_info"
+#define RCT_CMD_CLUSTER_CLUSTER_INFO	"cluster_cluster_info"
 #define RCT_CMD_SLOTS_STATE				"slots_state"
 #define RCT_CMD_NODE_SLOT_NUM			"node_slot_num"
 #define RCT_CMD_NEW_NODES_NAME			"new_nodes_name"
@@ -52,5 +54,15 @@ typedef struct RCTCommand {
 void rct_show_command_usage(void);
 
 void populateCommandTable(dict *commands);
+
+void cluster_state(struct rctContext *ctx , int type);
+void cluster_cluster_state(struct rctContext *ctx , int type);
+void cluster_used_memory(struct rctContext *ctx , int type);
+void cluster_keys_num(struct rctContext *ctx , int type);
+void cluster_node_state(struct rctContext *ctx , int type);
+void cluster_flushall(struct rctContext *ctx, int type);
+void cluster_config_get(struct rctContext *ctx , int type);
+void cluster_config_set(struct rctContext *ctx , int type);
+void cluster_config_rewrite(struct rctContext *ctx , int type);
 
 #endif

@@ -2,7 +2,160 @@
 
 #include<async.h>
 #include<adapters/ae.h>
+#include<hiutil.h>
 #include<time.h>
+
+unsigned int dictSdsHash(const void *key) {
+    return dictGenHashFunction((unsigned char*)key, sdslen((char*)key));
+}
+
+int dictSdsKeyCompare(void *privdata, const void *key1,
+        const void *key2)
+{
+    int l1,l2;
+    DICT_NOTUSED(privdata);
+
+    l1 = sdslen((sds)key1);
+    l2 = sdslen((sds)key2);
+    if (l1 != l2) return 0;
+    return memcmp(key1, key2, l1) == 0;
+}
+
+
+void dictSdsDestructor(void *privdata, void *val)
+{
+    DICT_NOTUSED(privdata);
+
+    sdsfree(val);
+}
+
+
+dictType commandTableDictType = {
+    dictSdsHash,                /* hash function */
+    NULL,                       /* key dup */
+    NULL,                       /* val dup */
+    dictSdsKeyCompare,          /* key compare */
+    dictSdsDestructor,          /* key destructor */
+    NULL                        /* val destructor */
+};
+
+rctContext *
+create_context(struct instance *nci)
+{
+    int ret;
+    int j;
+    rctContext *rct_ctx;
+    dict *commands;
+    sds *cmd_parts = NULL;
+    int cmd_parts_count = 0;
+    sds *arg_addr;
+
+    if(nci == NULL)
+    {
+        return NULL;
+    }
+
+    rct_ctx = rct_alloc(sizeof(rctContext));
+    if(rct_ctx == NULL)
+    {
+        return NULL;
+    }
+
+    rct_ctx->cc = NULL;
+
+    commands = dictCreate(&commandTableDictType,NULL);
+    if(commands == NULL)
+    {
+        rct_free(rct_ctx);
+        return NULL;
+    }
+
+    populateCommandTable(commands);
+    rct_ctx->commands = commands;
+
+    rct_ctx->address = nci->addr;
+
+    cmd_parts = sdssplitargs(nci->command, &cmd_parts_count);
+    if(cmd_parts == NULL || cmd_parts_count <= 0)
+    {
+        rct_free(rct_ctx);
+        dictRelease(commands);
+        return NULL;
+    }
+    
+    rct_ctx->cmd = cmd_parts[0];
+
+    ret = hiarray_init(&rct_ctx->args, 1, sizeof(sds));
+    if(ret != RCT_OK)
+    {
+        sdsfreesplitres(cmd_parts, cmd_parts_count);
+        rct_free(rct_ctx);
+        dictRelease(commands);
+        return NULL;
+    }
+    
+    for(j = 1; j < cmd_parts_count; j++)
+    {
+        arg_addr = hiarray_push(&rct_ctx->args);
+        *arg_addr = cmd_parts[j];
+    }
+
+    free(cmd_parts);
+
+    if(strcmp(nci->role, RCT_OPTION_REDIS_ROLE_ALL) == 0)
+    {
+        rct_ctx->redis_role = RCT_REDIS_ROLE_ALL;
+    }
+    else if(strcmp(nci->role, RCT_OPTION_REDIS_ROLE_MASTER) == 0)
+    {
+        rct_ctx->redis_role = RCT_REDIS_ROLE_MASTER;
+    }
+    else if(strcmp(nci->role, RCT_OPTION_REDIS_ROLE_SLAVE) == 0)
+    {
+        rct_ctx->redis_role = RCT_REDIS_ROLE_SLAVE;
+    }
+    else
+    {
+        rct_ctx->redis_role = RCT_REDIS_ROLE_NULL;
+    }
+
+    if(nci->simple)
+    {
+        rct_ctx->simple = 1;
+    }
+    else
+    {
+        rct_ctx->simple = 0;
+    }
+
+    rct_ctx->buffer_size = nci->buffer_size;
+    rct_ctx->thread_count = nci->thread_count;
+
+    rct_ctx->acmd = NULL;
+    
+    return rct_ctx;
+}
+
+void destroy_context(rctContext *rct_ctx)
+{
+    while(hiarray_n(&rct_ctx->args) > 0)
+    {
+        sds *arg = hiarray_pop(&rct_ctx->args);
+        sdsfree(*arg);
+    }
+    hiarray_deinit(&rct_ctx->args);
+    
+    
+    sdsfree(rct_ctx->cmd);
+    dictRelease(rct_ctx->commands);
+    
+    if(rct_ctx->acmd != NULL){
+        async_command_deinit(rct_ctx->acmd);
+        rct_free(rct_ctx->acmd);
+    }
+    
+    rct_free(rct_ctx);
+}
 
 typedef struct redis_node{
     sds name;
@@ -435,9 +588,9 @@ int nodes_hold_slot_num(dict *nodes, int isprint)
         for(i = 0; i < hiarray_n(statistics_nodes) && total_slot_num > 0; i ++)
         {
             statistics_node = hiarray_get(statistics_nodes, i);
-            log_stdout("node[%s] holds %d slots_region and %d slots\t%d%s", statistics_node->addr, 
+            log_stdout("node[%s] holds %d slots_region and %d slots\t%.2f%%", statistics_node->addr, 
                 statistics_node->slot_region_num_now, statistics_node->slot_num_now, 
-                (statistics_node->slot_num_now*100)/total_slot_num,"%");
+                ((float)statistics_node->slot_num_now/(float)total_slot_num)*100);
         }
         
         log_stdout("");
@@ -1763,6 +1916,1783 @@ done:
         freeReplyObject(reply);
         reply = NULL;   
     }
+}
+
+int async_command_init(async_command *acmd, rctContext *ctx, char *addrs, int flags)
+{
+    int ret;
+
+    if(acmd == NULL){
+        return RCT_ERROR;
+    }
+
+    acmd->ctx = NULL;
+    acmd->loop = NULL;
+    acmd->acc = NULL;
+    acmd->nodes = NULL;
+    acmd->command = NULL;
+    acmd->parameters = NULL;
+    acmd->callback = NULL;
+    acmd->role = RCT_REDIS_ROLE_NULL;
+    acmd->nodes_count = 0;
+    acmd->finished_count = 0;
+    hiarray_null(&acmd->results);
+    acmd->stop = 0;
+    acmd->step = 0;
+
+    acmd->ctx = ctx;
+    
+    acmd->acc = redisClusterAsyncConnect(addrs, HIRCLUSTER_FLAG_ADD_SLAVE);
+    if(acmd->acc == NULL){
+        log_error("Connect to %s failed.", addrs);
+        goto error;
+    }
+
+    acmd->nodes = acmd->acc->cc->nodes;
+
+    acmd->loop = aeCreateEventLoop(dictSize(acmd->nodes) + 100);
+    if(acmd->loop == NULL){
+        log_error("Create ae event loop failed.");
+        goto error;
+    }
+
+    redisClusterAeAttach(acmd->loop, acmd->acc);
+
+    ret = hiarray_init(&acmd->results, dictSize(acmd->nodes), sizeof(struct cluster_node *));
+    if(ret != HI_OK){
+        log_error("Init result array failed.");
+        goto error;
+    }
+
+    acmd->stop = 1;
+
+    return RCT_OK;
+
+error:
+
+    async_command_deinit(acmd);
+    return RCT_ERROR;
+}
+
+void async_command_deinit(async_command *acmd)
+{
+    struct cluster_node **node;
+    redisReply *reply;
+
+    if(acmd == NULL){
+        return;
+    }
+
+    if(acmd->results.nelem > 0){
+        while(hiarray_n(&acmd->results) > 0){
+            node = hiarray_pop(&acmd->results);
+            
+            reply = (*node)->data;
+            (*node)->data = NULL;
+            if(reply != NULL){
+                freeReplyObject(reply);
+            }
+        }
+
+        hiarray_deinit(&acmd->results);
+    }
+
+    if(acmd->acc != NULL){
+        redisClusterAsyncFree(acmd->acc);
+        acmd->acc = NULL;
+    }
+
+    acmd->ctx = NULL;
+    acmd->nodes = NULL;
+
+    if(acmd->command != NULL){
+        sdsfree(acmd->command);
+        acmd->command = NULL;
+    }
+
+    if(acmd->parameters != NULL){
+        sds *str;
+        while(hiarray_n(acmd->parameters) > 0){
+            str = hiarray_pop(acmd->parameters);
+            sdsfree(*str);
+        }
+
+        hiarray_destroy(acmd->parameters);
+        acmd->parameters = NULL;
+    }
+
+    if(acmd->loop != NULL){
+        aeDeleteEventLoop(acmd->loop);
+        acmd->loop = NULL;
+    }
+    
+    acmd->callback = NULL;
+    acmd->role = RCT_REDIS_ROLE_NULL;
+    acmd->nodes_count = 0;
+    acmd->finished_count = 0;
+    acmd->stop = 0;
+    acmd->step = 0;
+}
+
+void async_command_reset(async_command *acmd)
+{
+    struct cluster_node **node;
+    redisReply *reply;
+
+    if(acmd == NULL){
+        return;
+    }
+
+    if(acmd->results.nelem > 0){
+        while(hiarray_n(&acmd->results) > 0){
+            node = hiarray_pop(&acmd->results);
+            
+            reply = (*node)->data;
+            (*node)->data = NULL;
+            if(reply != NULL){
+                freeReplyObject(reply);
+            }
+        }
+
+        hiarray_deinit(&acmd->results);
+    }
+
+    if(acmd->command != NULL){
+        sdsfree(acmd->command);
+        acmd->command = NULL;
+    }
+
+    if(acmd->parameters != NULL){
+        sds *str;
+        while(hiarray_n(acmd->parameters) > 0){
+            str = hiarray_pop(acmd->parameters);
+            sdsfree(*str);
+        }
+
+        hiarray_destroy(acmd->parameters);
+        acmd->parameters = NULL;
+    }
+
+    acmd->callback = NULL;
+    acmd->role = RCT_REDIS_ROLE_NULL;
+    acmd->nodes_count = 0;
+    acmd->finished_count = 0;
+    acmd->stop = 1;
+}
+
+static void async_callback_func(redisAsyncContext *c, void *r, void *privdata) {
+    redisReply *reply = r;
+    async_callback_data *data = privdata;
+    async_command *acmd = data->acmd;
+    struct cluster_node *node = data->node, **result;
+    rctContext *ctx = acmd->ctx;
+
+    acmd->finished_count ++;
+    
+    if (reply == NULL) node->acon = NULL;
+
+    if(acmd->callback != NULL){
+        if(reply == NULL){
+            node->data = NULL;
+        }else{
+            node->data = redis_reply_clone(reply);
+            if(node->data == NULL){
+                log_error("Redis reply clone failed.");
+            }
+        }
+        
+        if(acmd->role == RCT_REDIS_ROLE_ALL || 
+            acmd->role == RCT_REDIS_ROLE_MASTER){
+            if(node->role == REDIS_ROLE_SLAVE){
+                goto done;
+            }
+        }else if(acmd->role == RCT_REDIS_ROLE_SLAVE){
+            if(node->role != REDIS_ROLE_SLAVE){
+                goto done;
+            }
+        }else{
+            log_error("Node %s role is error.", node->addr);
+            goto done;
+        }
+        
+        result = hiarray_push(&acmd->results);
+        *result = node;
+    }
+
+done:
+
+    if(acmd->finished_count >= acmd->nodes_count){
+        if(acmd->callback != NULL){
+            acmd->callback(acmd);
+        }
+
+        if(acmd->stop){
+            aeStop(acmd->loop);
+        }else{
+            acmd->step ++;
+        }
+    }
+
+    rct_free(data);
+}
+
+static int do_command_one_node_async(async_command *acmd, struct cluster_node *node)
+{
+    async_callback_data *data;
+    redisAsyncContext *ac;
+    int ret, i, argc;
+    char **argv;
+    size_t *argvlen;
+    sds *str;
+        
+    if(acmd == NULL || node == NULL){
+        return RCT_ERROR;
+    }
+
+    data = rct_alloc(sizeof(*data));
+    if(data == NULL){
+        return RCT_ENOMEM;
+    }
+
+    data->acmd = acmd;
+    data->node = node;
+    ac = actx_get_by_node(acmd->acc, node);
+    if(acmd->parameters == NULL){
+        ret = redisAsyncCommand(ac, async_callback_func, data, acmd->command);
+    }else{
+        argc = 1 + hiarray_n(acmd->parameters);
+        argv = rct_alloc(argc * sizeof(*argv));
+        argvlen = rct_alloc(argc * sizeof(*argvlen));
+
+        argv[0] = acmd->command;
+        argvlen[0] = sdslen(acmd->command);
+        for(i = 1; i < argc; i ++){
+            str = hiarray_get(acmd->parameters, i - 1);
+            argv[i] = *str;
+            argvlen[i] = sdslen(*str);
+        }
+        
+        ret = redisAsyncCommandArgv(ac, async_callback_func, data, argc, (const char **)argv, argvlen);
+
+        rct_free(argv);
+        rct_free(argvlen);
+    }
+
+    if(ret != REDIS_OK){
+        if(ac->err) log_error("err: %s", ac->errstr);
+        return RCT_ERROR;
+    }
+    
+    acmd->nodes_count ++;
+    
+    return RCT_OK;
+}
+
+static int do_command_all_nodes_async(async_command *acmd)
+{
+    int ret;
+    dictIterator *di = NULL;
+    dictEntry *de;
+    listIter *it;
+    listNode *ln;
+    dict *nodes;
+    list *slaves;
+    struct cluster_node *master, *slave;
+
+    if(acmd == NULL)
+    {
+        return RCT_ERROR;
+    }
+    
+    nodes = acmd->nodes;
+    if(nodes == NULL)
+    {
+        return RCT_ERROR;
+    }
+
+    di = dictGetIterator(nodes);
+    
+    while((de = dictNext(di)) != NULL) {
+        master = dictGetEntryVal(de);
+
+        if(acmd->role != RCT_REDIS_ROLE_SLAVE){
+            ret = do_command_one_node_async(acmd, master);
+            if(ret != RCT_OK){
+                
+                goto error;
+            }
+        }
+
+        if(acmd->role != RCT_REDIS_ROLE_MASTER){
+            slaves = master->slaves;
+            if(slaves == NULL)
+            {
+                continue;
+            }
+            
+            it = listGetIterator(slaves, AL_START_HEAD);
+            while((ln = listNext(it)) != NULL)
+            {
+                slave = listNodeValue(ln);
+                ret = do_command_one_node_async(acmd, slave);
+                if(ret != RCT_OK){
+                    goto error;
+                }
+            }
+
+            listReleaseIterator(it);
+        }
+    }
+
+    dictReleaseIterator(di);
+    
+    return RCT_OK;
+
+error:
+
+    if(di != NULL){
+        dictReleaseIterator(di);
+    }
+
+    return RCT_ERROR;
+}
+
+int cluster_async_call(rctContext *ctx, 
+    char *command, struct hiarray *parameters, 
+    int role, async_callback_reply *callback)
+{
+    int ret;
+    async_command *acmd;
+
+    if(role != RCT_REDIS_ROLE_ALL &&
+        role != RCT_REDIS_ROLE_MASTER &&
+        role != RCT_REDIS_ROLE_SLAVE){
+        log_error("Call %s for target redis role %s is error.",
+            role);
+        return RCT_ERROR;
+    }
+
+    acmd = ctx->acmd;
+    if(acmd == NULL){
+        acmd = rct_alloc(sizeof(*acmd));
+        if(acmd == NULL){
+            log_error("Out of memory.");
+            return RCT_ENOMEM;
+        }
+
+        ret = async_command_init(acmd, ctx, ctx->address, 0);
+        if(ret != RCT_OK){
+            log_error("Init async_command error.");
+            goto error;
+        }
+
+        ctx->acmd = acmd;
+    }else{
+        async_command_reset(acmd);
+    }
+
+    acmd->role = role;
+
+    acmd->command = sdsnew(command);
+    if(parameters != NULL){
+        acmd->parameters = parameters;
+    }
+    
+    acmd->callback = callback;
+
+    ret = do_command_all_nodes_async(acmd);
+    if(ret != RCT_OK){
+        log_error("Call command \"%s\" error.", acmd->command);
+        goto error;
+    }
+
+    if(acmd->nodes_count == 0){
+        if(acmd->callback != NULL){
+            acmd->callback(acmd);
+        }
+
+        if(acmd->stop){
+            if(acmd->step == 0){
+                return RCT_OK;
+            }else{
+                aeStop(acmd->loop);
+            }
+        }else{
+            acmd->step ++;
+        }
+    }
+
+    if(acmd->step == 0){
+        aeMain(acmd->loop);
+    }
+    
+    return RCT_OK;
+
+error:
+    
+    async_command_deinit(acmd);
+    rct_free(acmd);
+    ctx->acmd = NULL;
+
+    return RCT_ERROR;
+}
+
+static int
+redis_cluster_addr_cmp(const void *t1, const void *t2)
+{
+    const cluster_node **s1 = t1, **s2 = t2;
+
+    return sdscmp((*s1)->addr, (*s2)->addr);
+}
+
+void async_reply_status(async_command *acmd)
+{
+    int i, all_is_ok;
+    redisReply *reply;
+    list *slaves;
+    listIter *li = NULL;
+    listNode *ln;
+    struct cluster_node **node, *slave;
+    struct hiarray *results = &acmd->results;
+    rctContext *ctx = acmd->ctx;
+
+    hiarray_sort(results, redis_cluster_addr_cmp);
+
+    all_is_ok = 1;
+    
+    for(i = 0; i < hiarray_n(results); i ++){
+        node = hiarray_get(results, i);
+        reply = (*node)->data;
+
+        if(reply == NULL){
+            all_is_ok = 0;
+        }else if(reply->type != REDIS_REPLY_STATUS ||
+            strcmp(reply->str, "OK") != 0){
+            all_is_ok = 0;
+        }
+        
+        if(!ctx->simple){
+            log_stdout("%s[%s] %s", 
+                (*node)->role == REDIS_ROLE_MASTER?"master":"slave",
+                (*node)->addr,
+                reply?reply->str:"error");
+        }
+        
+        if(ctx->redis_role == RCT_REDIS_ROLE_ALL || 
+            ctx->redis_role == RCT_REDIS_ROLE_SLAVE){
+            slaves = (*node)->slaves;
+            if((*node)->role == REDIS_ROLE_MASTER &&
+                slaves != NULL){
+                li = listGetIterator(slaves, AL_START_HEAD);
+                while(ln = listNext(li)){
+                    slave = listNodeValue(ln);
+                    reply = slave->data;
+                    if(reply == NULL){
+                        all_is_ok = 0;
+                    }else if(reply->type != REDIS_REPLY_STATUS ||
+                        strcmp(reply->str, "OK") != 0){
+                        all_is_ok = 0;
+                    }
+                    
+                    if(!ctx->simple){
+                        log_stdout(" slave[%s] %s",
+                            slave->addr,
+                            reply?reply->str:"error");
+                    }
+                }
+
+                listReleaseIterator(li);
+                li = NULL;
+            }
+
+            if(!ctx->simple && ctx->redis_role == RCT_REDIS_ROLE_ALL) log_stdout("");
+        }
+    }
+
+    log_stdout("");
+
+    if(all_is_ok){
+        log_stdout("All nodes \"%s\" are OK", acmd->command);
+    }else{
+        log_stdout("Some nodes \"%s\" are ERROR", acmd->command);
+    }
+}
+
+void async_reply_string(async_command *acmd)
+{
+    int i, all_is_ok, all_is_same;
+    redisReply *reply;
+    char *previous_str;
+    int previous_len;
+    list *slaves;
+    listIter *li = NULL;
+    listNode *ln;
+    struct cluster_node **node, *slave;
+    struct hiarray *results = &acmd->results;
+    rctContext *ctx = acmd->ctx;
+
+    hiarray_sort(results, redis_cluster_addr_cmp);
+
+    all_is_ok = 1;
+    all_is_same = 1;
+    previous_str = NULL;
+    previous_len = 0;
+    
+    for(i = 0; i < hiarray_n(results); i ++){
+        node = hiarray_get(results, i);
+        reply = (*node)->data;
+        log_stdout("reply->type: %d", reply->type);
+        if(reply == NULL){
+            all_is_ok = 0;
+        }else if(reply->type != REDIS_REPLY_STRING){
+            all_is_ok = 0;
+        }else if(previous_str == NULL){
+            previous_str = reply->str;
+            previous_len = reply->len;
+        }else if(all_is_same){
+            if(strncmp(previous_str, reply->str, 
+                MIN(previous_len, reply->len)) == 0){
+                previous_str = reply->str;
+                previous_len = reply->len;
+            }else{
+                all_is_same = 0;
+            }
+        }
+
+        if(!ctx->simple){
+            if(reply == NULL){
+                 log_stdout("%s[%s] is error", 
+                    (*node)->role == REDIS_ROLE_MASTER?"master":"slave",
+                    (*node)->addr);
+            }else{
+                log_stdout("%s[%s] %s", 
+                    (*node)->role == REDIS_ROLE_MASTER?"master":"slave",
+                    (*node)->addr,
+                    reply?reply->str:"NULL");
+            }
+        }
+        
+        if(ctx->redis_role == RCT_REDIS_ROLE_ALL || 
+            ctx->redis_role == RCT_REDIS_ROLE_SLAVE){
+            slaves = (*node)->slaves;
+            if((*node)->role == REDIS_ROLE_MASTER &&
+                slaves != NULL){
+                li = listGetIterator(slaves, AL_START_HEAD);
+                while(ln = listNext(li)){
+                    slave = listNodeValue(ln);
+                    reply = slave->data;
+                    
+                    if(reply == NULL){
+                        all_is_ok = 0;
+                    }else if(reply->type != REDIS_REPLY_STRING){
+                        all_is_ok = 0;
+                    }else if(previous_str == NULL){
+                        previous_str = reply->str;
+                        previous_len = reply->len;
+                    }else if(all_is_same){
+                        if(strncmp(previous_str, reply->str, 
+                            MIN(previous_len, reply->len)) == 0){
+                            previous_str = reply->str;
+                            previous_len = reply->len;
+                        }else{
+                            all_is_same = 0;
+                        }
+                    }
+
+                    if(!ctx->simple){
+                        if(reply == NULL){
+                            log_stdout(" slave[%s] is error",
+                                slave->addr);
+                        }else{
+                            log_stdout(" slave[%s] %s",
+                                slave->addr,
+                                reply?reply->str:"error");
+                        }
+                    }
+                }
+
+                listReleaseIterator(li);
+                li = NULL;
+            }
+            
+            if(!ctx->simple && ctx->redis_role == RCT_REDIS_ROLE_ALL) log_stdout("");
+        }
+    }
+
+    log_stdout("");
+
+    if(all_is_ok && all_is_same){
+        log_stdout("All nodes \"%s\" are SAME", acmd->command);
+    }else if(all_is_ok && !all_is_same){
+        log_stdout("Some nodes \"%s\" are DIFFERENT", acmd->command);
+    }else if(!all_is_ok && all_is_same){
+        log_stdout("Some nodes are error, others \"%s\" are SAME", acmd->command);
+    }else{
+        log_stdout("Some nodes are error, others \"%s\" are DIFFERENT", acmd->command);
+    }
+}
+
+static sds redis_reply_to_string(redisReply *reply)
+{
+    int i;
+    sds str, substr;
+
+    if(reply == NULL){
+        return NULL;
+    }
+
+    switch (reply->type)
+    {
+    case REDIS_REPLY_STRING:
+    case REDIS_REPLY_STATUS:
+    case REDIS_REPLY_ERROR:
+        str = sdsnewlen(reply->str, reply->len);
+        break;
+    case REDIS_REPLY_INTEGER:
+        str = sdsfromlonglong(reply->integer);
+        break;
+    case REDIS_REPLY_NIL:
+        str = NULL;
+        break;
+    case REDIS_REPLY_ARRAY:
+        str = sdsempty();
+        for(i = 0; i < reply->elements; i ++){
+            substr = redis_reply_to_string(reply->element[i]);
+            if(substr == NULL){
+                continue;
+            }
+            str = sdscatsds(str, substr);
+            if(i < reply->elements - 1){
+                str = sdscat(str, " ");
+            }
+            sdsfree(substr);
+        }
+
+        if(sdslen(str) == 0){
+            sdsfree(str);
+            str = NULL;
+        }
+        break;
+    default:
+        str = NULL;
+        NOT_REACHED();
+        break;
+    }
+
+    return str;
+}
+
+void async_reply_display(async_command *acmd)
+{
+    int i;
+    redisReply *reply;
+    sds str;
+    list *slaves;
+    listIter *li = NULL;
+    listNode *ln;
+    struct cluster_node **node, *slave;
+    struct hiarray *results = &acmd->results;
+    rctContext *ctx = acmd->ctx;
+
+    hiarray_sort(results, redis_cluster_addr_cmp);
+    
+    str = NULL;
+    
+    for(i = 0; i < hiarray_n(results); i ++){
+        node = hiarray_get(results, i);
+        reply = (*node)->data;
+
+        if(str != NULL){
+            sdsfree(str);
+        }
+        str = redis_reply_to_string(reply);
+
+        if(!ctx->simple){
+            if(reply == NULL){
+                log_stdout("%s[%s] is error", 
+                    (*node)->role == REDIS_ROLE_MASTER?"master":"slave",
+                    (*node)->addr);
+            }else{
+                log_stdout("%s[%s] %s", 
+                    (*node)->role == REDIS_ROLE_MASTER?"master":"slave",
+                    (*node)->addr,
+                    str?str:"NULL");
+            }
+        }
+        
+        if(ctx->redis_role == RCT_REDIS_ROLE_ALL || 
+            ctx->redis_role == RCT_REDIS_ROLE_SLAVE){
+            slaves = (*node)->slaves;
+            if((*node)->role == REDIS_ROLE_MASTER &&
+                slaves != NULL){
+                li = listGetIterator(slaves, AL_START_HEAD);
+                while(ln = listNext(li)){
+                    slave = listNodeValue(ln);
+                    reply = slave->data;
+
+                    if(str != NULL){
+                        sdsfree(str);
+                    }
+                    str = redis_reply_to_string(reply);
+
+                    if(!ctx->simple){
+                        if(reply == NULL){
+                            log_stdout(" slave[%s] is error",
+                                slave->addr);
+                        }else{
+                            log_stdout(" slave[%s] %s",
+                                slave->addr,
+                                str?str:"NULL");
+                        }
+                    }
+                }
+
+                listReleaseIterator(li);
+                li = NULL;
+            }
+            
+            if(!ctx->simple && ctx->redis_role == RCT_REDIS_ROLE_ALL) log_stdout("");
+        }
+    }
+
+    if(str != NULL){
+        sdsfree(str);
+    }
+}
+
+void async_reply_display_check(async_command *acmd)
+{
+    int i, all_is_ok, all_is_same;
+    redisReply *reply;
+    sds pre_str, str;
+    list *slaves;
+    listIter *li = NULL;
+    listNode *ln;
+    struct cluster_node **node, *slave;
+    struct hiarray *results = &acmd->results;
+    rctContext *ctx = acmd->ctx;
+
+    hiarray_sort(results, redis_cluster_addr_cmp);
+
+    all_is_ok = 1;
+    all_is_same = 1;
+    pre_str = NULL;
+    str = NULL;
+    
+    for(i = 0; i < hiarray_n(results); i ++){
+        node = hiarray_get(results, i);
+        reply = (*node)->data;
+
+        if(str != NULL){
+            sdsfree(str);
+        }
+        
+        str = redis_reply_to_string(reply);
+
+        if(!ctx->simple){
+            if(reply == NULL){
+                log_stdout("%s[%s] is error", 
+                    (*node)->role == REDIS_ROLE_MASTER?"master":"slave",
+                    (*node)->addr);
+            }else{
+                log_stdout("%s[%s] %s", 
+                    (*node)->role == REDIS_ROLE_MASTER?"master":"slave",
+                    (*node)->addr,
+                    str?str:"NULL");
+            }
+        }
+        
+        if(str == NULL){
+            all_is_ok = 0;
+        }else{
+            if(pre_str != NULL){
+                if(sdscmp(pre_str, str) != 0){
+                    all_is_same = 0;
+                }
+                sdsfree(pre_str);
+            }
+            pre_str = str;
+            str = NULL;
+        }
+        
+        if(ctx->redis_role == RCT_REDIS_ROLE_ALL || 
+            ctx->redis_role == RCT_REDIS_ROLE_SLAVE){
+            slaves = (*node)->slaves;
+            if((*node)->role == REDIS_ROLE_MASTER &&
+                slaves != NULL){
+                li = listGetIterator(slaves, AL_START_HEAD);
+                while(ln = listNext(li)){
+                    slave = listNodeValue(ln);
+                    reply = slave->data;
+
+                    if(str != NULL){
+                        sdsfree(str);
+                    }
+                    
+                    str = redis_reply_to_string(reply);
+
+                    if(!ctx->simple){
+                        if(reply == NULL){
+                            log_stdout(" slave[%s] is error",
+                                slave->addr);
+                        }else{
+                            log_stdout(" slave[%s] %s",
+                            slave->addr,
+                            str?str:"NULL");
+                        }
+                    }
+                    
+                    if(str == NULL){
+                        all_is_ok = 0;
+                    }else{
+                        if(pre_str != NULL){
+                            if(sdscmp(pre_str, str) != 0){
+                                all_is_same = 0;
+                            }
+                            sdsfree(pre_str);
+                        }
+                        pre_str = str;
+                        str = NULL;
+                    }
+                }
+
+                listReleaseIterator(li);
+                li = NULL;
+            }
+            
+            if(!ctx->simple && ctx->redis_role == RCT_REDIS_ROLE_ALL) log_stdout("");
+        }
+    }
+
+    log_stdout("");
+
+    if(all_is_ok && all_is_same){
+        log_stdout("All nodes \"%s\" are SAME: %s", 
+            acmd->command, pre_str?pre_str:"NULL");
+    }else if(all_is_ok && !all_is_same){
+        log_stdout("Some nodes \"%s\" are DIFFERENT", acmd->command);
+    }else if(!all_is_ok && all_is_same){
+        log_stdout("Some nodes are error, others \"%s\" are SAME: %s", 
+            acmd->command, pre_str?pre_str:"NULL");
+    }else{
+        log_stdout("Some nodes are error, others \"%s\" are DIFFERENT", acmd->command);
+    }
+
+    if(pre_str != NULL){
+        sdsfree(pre_str);
+    }
+
+    if(str != NULL){
+        sdsfree(str);
+    }
+}
+
+void async_reply_maxmemory(async_command *acmd)
+{
+    int i, all_is_ok, all_is_same;
+    char *pre_str, *str;
+    redisReply *reply, *subreply;
+    long long total_memory, memory;
+    list *slaves;
+    listIter *li = NULL;
+    listNode *ln;
+    struct cluster_node **node, *slave;
+    struct hiarray *results = &acmd->results;
+    rctContext *ctx = acmd->ctx;
+
+    hiarray_sort(results, redis_cluster_addr_cmp);
+
+    all_is_ok = 1;
+    all_is_same = 1;
+    total_memory = 0;
+    pre_str = NULL;
+    str = NULL;
+    
+    for(i = 0; i < hiarray_n(results); i ++){
+        node = hiarray_get(results, i);
+        reply = (*node)->data;
+        
+        if(reply == NULL || reply->type != REDIS_REPLY_ARRAY 
+            || reply->elements != 2){
+            str = NULL;
+        }else{
+            str = reply->element[1]->str;
+            if(str != NULL){
+                memory = rct_atoll(str, strlen(str));
+                total_memory += memory;
+            }
+        }
+
+        if(!ctx->simple){
+            
+            if(reply == NULL){
+                log_stdout("%s[%s] is error",
+                    (*node)->role == REDIS_ROLE_MASTER?"master":"slave",
+                    (*node)->addr);
+            }else{
+                log_stdout("%s[%s] maxmemory: %s (%lld MB)", 
+                    (*node)->role == REDIS_ROLE_MASTER?"master":"slave",
+                    (*node)->addr,
+                    str?str:"NULL", str?memory/(1024*1024):0);
+            }
+        }
+        
+        if(str == NULL){
+            all_is_ok = 0;
+        }else{
+            if(pre_str != NULL){
+                if(strcmp(pre_str, str) != 0){
+                    all_is_same = 0;
+                }
+            }
+            pre_str = str;
+            str = NULL;
+        }
+        
+        if(ctx->redis_role == RCT_REDIS_ROLE_ALL || 
+            ctx->redis_role == RCT_REDIS_ROLE_SLAVE){
+            slaves = (*node)->slaves;
+            if((*node)->role == REDIS_ROLE_MASTER &&
+                slaves != NULL){
+                li = listGetIterator(slaves, AL_START_HEAD);
+                while(ln = listNext(li)){
+                    slave = listNodeValue(ln);
+                    reply = slave->data;
+
+                    if(reply == NULL || reply->type != REDIS_REPLY_ARRAY || 
+                        reply->elements != 2){
+                        str = NULL;
+                    }else{
+                        str = reply->element[1]->str;
+                        if(str != NULL){
+                            memory = rct_atoll(str, strlen(str));
+                            total_memory += memory;
+                        }
+                    }
+
+                    if(!ctx->simple){
+                        if(reply == NULL){
+                            log_stdout(" slave[%s] is error",
+                                slave->addr);
+                        }else{
+                            log_stdout(" slave[%s] maxmemory: %s (%lld MB)",
+                                slave->addr,
+                                str?str:"NULL", str?memory/(1024*1024):0);
+                        }
+                    }
+                    
+                    if(str == NULL){
+                        all_is_ok = 0;
+                    }else{
+                        if(pre_str != NULL){
+                            if(strcmp(pre_str, str) != 0){
+                                all_is_same = 0;
+                            }
+                        }
+                        pre_str = str;
+                        str = NULL;
+                    }
+                }
+
+                listReleaseIterator(li);
+                li = NULL;
+            }
+            
+            if(!ctx->simple && ctx->redis_role == RCT_REDIS_ROLE_ALL) log_stdout("");
+        }
+    }
+
+    log_stdout("");
+
+    if(all_is_ok && all_is_same){
+        log_stdout("All nodes \"maxmemory\" are SAME: %s (%lld MB)", 
+            pre_str?pre_str:"NULL", 
+            pre_str?rct_atoll(pre_str, strlen(pre_str))/(1024*1024):0);
+    }else if(all_is_ok && !all_is_same){
+        log_stdout("Some nodes \"maxmemory\" are DIFFERENT");
+    }else if(!all_is_ok && all_is_same){
+        log_stdout("Some nodes are error, others \"maxmemory\" are SAME: %s (%lld MB)", 
+            pre_str?pre_str:"NULL", 
+            pre_str?rct_atoll(pre_str, strlen(pre_str))/(1024*1024):0);
+    }else{
+        log_stdout("Some nodes are error, others \"maxmemory\" are DIFFERENT");
+    }
+
+    log_stdout("Cluster total maxmemory: %lld (%lld MB)",
+        total_memory, total_memory/(1024*1024));
+}
+
+static sds redis_reply_info_get_value(char *str, int len, sds key)
+{
+    sds value;
+    int value_len;
+
+    if(str == NULL || len <= 0 ||
+        key == NULL){
+        return NULL;
+    }
+
+    value = NULL;
+    
+    while(len > sdslen(key)){
+        //log_stdout("str: %s", str);
+        if(strncmp(str, key, sdslen(key))){
+            while(*str != '\n'){
+                str ++;
+                len --;
+            }
+
+            if(len > 0){
+                str ++;
+                len --;
+            }
+        }else{
+            if(*(str+sdslen(key)) != ':'){
+                log_error("Error: reply format for info is error: "
+                    "there must follow ':' for %s", key);
+                value = NULL;
+                break;
+            }
+
+            str += sdslen(key) + 1;
+            value_len = 0;
+            while(*(str+value_len) != '\r'){
+                value_len ++;
+            }
+
+            if(value_len == 0){
+                log_error("Error: reply format for info is error: "
+                    "value length can not be zero for %s",key);
+                break;
+            }
+
+            value = sdsnewlen(str, value_len);
+            break;
+        }
+    }
+
+    return value;
+}
+
+void async_reply_info_memory(async_command *acmd)
+{
+    int i, all_is_ok;
+    sds key, value;
+    redisReply *reply, *subreply;
+    long long total_memory, memory;
+    list *slaves;
+    listIter *li = NULL;
+    listNode *ln;
+    struct cluster_node **node, *slave;
+    struct hiarray *results = &acmd->results;
+    rctContext *ctx = acmd->ctx;
+
+    if(hiarray_n(&ctx->args) != 1){
+        log_error("Error: args for % is not 1", acmd->command);
+        return;
+    }
+
+    key = *(sds*)hiarray_get(&ctx->args, 0);
+
+    hiarray_sort(results, redis_cluster_addr_cmp);
+
+    all_is_ok = 1;
+    total_memory = 0;
+    value = NULL;
+    
+    for(i = 0; i < hiarray_n(results); i ++){
+        node = hiarray_get(results, i);
+        reply = (*node)->data;
+
+        if(value != NULL){
+            sdsfree(value);
+            value = NULL;
+        }
+        
+        if(reply == NULL || reply->type != REDIS_REPLY_STRING){
+            value = NULL;
+        }else{
+            value = redis_reply_info_get_value(reply->str, reply->len, key);
+            if(value != NULL){
+                memory = rct_atoll(value, sdslen(value));
+                total_memory += memory;
+            }
+        }
+
+        if(value == NULL){
+            all_is_ok = 0;
+        }
+        
+        if(ctx->redis_role == RCT_REDIS_ROLE_ALL || 
+            ctx->redis_role == RCT_REDIS_ROLE_SLAVE){
+            slaves = (*node)->slaves;
+            if((*node)->role == REDIS_ROLE_MASTER &&
+                slaves != NULL){
+                li = listGetIterator(slaves, AL_START_HEAD);
+                while(ln = listNext(li)){
+                    slave = listNodeValue(ln);
+                    reply = slave->data;
+
+                    if(value != NULL){
+                        sdsfree(value);
+                        value = NULL;
+                    }
+                    
+                    if(reply == NULL || reply->type != REDIS_REPLY_STRING){
+                        value = NULL;
+                    }else{
+                        value = redis_reply_info_get_value(reply->str, reply->len, key);
+                        if(value != NULL){
+                            memory = rct_atoll(value, sdslen(value));
+                            total_memory += memory;
+                        }
+                    }
+
+                    if(value == NULL){
+                        all_is_ok = 0;
+                    }
+                }
+
+                listReleaseIterator(li);
+                li = NULL;
+            }
+        }
+    }
+
+    for(i = 0; i < hiarray_n(results) && total_memory > 0; i ++){
+        node = hiarray_get(results, i);
+        reply = (*node)->data;
+
+        if(value != NULL){
+            sdsfree(value);
+            value = NULL;
+        }
+        
+        if(reply == NULL || reply->type != REDIS_REPLY_STRING){
+            value = NULL;
+        }else{
+            value = redis_reply_info_get_value(reply->str, reply->len, key);
+            if(value != NULL){
+                memory = rct_atoll(value, sdslen(value));
+            }
+        }
+        
+        if(!ctx->simple){
+            if(reply == NULL){
+                log_stdout("%s[%s] is error", 
+                    (*node)->role == REDIS_ROLE_MASTER?"master":"slave",
+                    (*node)->addr);
+            }else{
+                log_stdout("%s[%s] %s: %s (%lld MB %.2f%%)", 
+                    (*node)->role == REDIS_ROLE_MASTER?"master":"slave",
+                    (*node)->addr, key,
+                    value?value:"NULL", value?memory/(1024*1024):0,
+                    ((float)memory/(float)total_memory)*100);
+            }
+        }
+        
+        if(ctx->redis_role == RCT_REDIS_ROLE_ALL || 
+            ctx->redis_role == RCT_REDIS_ROLE_SLAVE){
+            slaves = (*node)->slaves;
+            if((*node)->role == REDIS_ROLE_MASTER &&
+                slaves != NULL){
+                li = listGetIterator(slaves, AL_START_HEAD);
+                while(ln = listNext(li)){
+                    slave = listNodeValue(ln);
+                    reply = slave->data;
+
+                    if(value != NULL){
+                        sdsfree(value);
+                        value = NULL;
+                    }
+                    
+                    if(reply == NULL || reply->type != REDIS_REPLY_STRING){
+                        value = NULL;
+                    }else{
+                        value = redis_reply_info_get_value(reply->str, reply->len, key);
+                        if(value != NULL){
+                            memory = rct_atoll(value, sdslen(value));
+                        }
+                    }
+
+                    if(!ctx->simple){
+                        if(reply == NULL){
+                            log_stdout(" slave[%s] is error", 
+                                (*node)->addr);
+                        }else{
+                            log_stdout(" slave[%s] %s: %s (%lld MB %.2f%%)",
+                                slave->addr,key,
+                                value?value:"NULL", value?memory/(1024*1024):0,
+                                ((float)memory/(float)total_memory)*100);
+                        }
+                    }
+                    
+                }
+
+                listReleaseIterator(li);
+                li = NULL;
+            }
+            
+            if(!ctx->simple && ctx->redis_role == RCT_REDIS_ROLE_ALL) log_stdout("");
+        }
+    }
+
+    log_stdout("");
+
+    if(all_is_ok){
+        log_stdout("Cluster total \"%s\" : %lld (%lld MB)", 
+            key, total_memory, total_memory/(1024*1024));
+    }else{
+        log_stdout("Some nodes are error, other nodes total \"%s\" : %lld (%lld MB)", 
+            key, total_memory, total_memory/(1024*1024));
+    }
+}
+
+void async_reply_info_keynum(async_command *acmd)
+{
+    int i, all_is_ok;
+    sds key, value;
+    char *str_begin, *str_end;
+    redisReply *reply, *subreply;
+    long long total_keynum, keynum;
+    list *slaves;
+    listIter *li = NULL;
+    listNode *ln;
+    struct cluster_node **node, *slave;
+    struct hiarray *results = &acmd->results;
+    rctContext *ctx = acmd->ctx;
+
+    if(hiarray_n(&ctx->args) != 1){
+        log_error("Error: args for % is not 1", acmd->command);
+        return;
+    }
+
+    key = *(sds*)hiarray_get(&ctx->args, 0);
+
+    hiarray_sort(results, redis_cluster_addr_cmp);
+
+    all_is_ok = 1;
+    total_keynum = 0;
+    value = NULL;
+    
+    for(i = 0; i < hiarray_n(results); i ++){
+        node = hiarray_get(results, i);
+        reply = (*node)->data;
+
+        if(value != NULL){
+            sdsfree(value);
+            value = NULL;
+        }
+        
+        if(reply == NULL || reply->type != REDIS_REPLY_STRING){
+            all_is_ok = 0;
+        }else{
+            value = redis_reply_info_get_value(reply->str, reply->len, key);
+            if(value != NULL){
+                str_begin = strchr(value, '=');
+                str_end = strchr(value, ',');
+                if(str_begin == NULL || str_end == NULL){
+                    all_is_ok = 0;
+                }else{
+                    str_begin ++;
+                    str_end--;
+                    if(str_end < str_begin){
+                        all_is_ok = 0;
+                    }else{
+                        keynum = rct_atoll(str_begin, (int)(str_end-str_begin) + 1);
+                        total_keynum += keynum;
+                    }
+                }
+            }
+        }
+        
+        if(ctx->redis_role == RCT_REDIS_ROLE_ALL || 
+            ctx->redis_role == RCT_REDIS_ROLE_SLAVE){
+            slaves = (*node)->slaves;
+            if((*node)->role == REDIS_ROLE_MASTER &&
+                slaves != NULL){
+                li = listGetIterator(slaves, AL_START_HEAD);
+                while(ln = listNext(li)){
+                    slave = listNodeValue(ln);
+                    reply = slave->data;
+
+                    if(value != NULL){
+                        sdsfree(value);
+                        value = NULL;
+                    }
+                    
+                    if(reply == NULL || reply->type != REDIS_REPLY_STRING){
+                        all_is_ok = 0;
+                    }else{
+                        value = redis_reply_info_get_value(reply->str, reply->len, key);
+                        if(value != NULL){
+                            str_begin = strchr(value, '=');
+                            str_end = strchr(value, ',');
+                            if(str_begin == NULL || str_end == NULL){
+                                all_is_ok = 0;
+                            }else{
+                                str_begin ++;
+                                str_end--;
+                                if(str_end < str_begin){
+                                    all_is_ok = 0;
+                                }else{
+                                    keynum = rct_atoll(str_begin, (int)(str_end-str_begin) + 1);
+                                    total_keynum += keynum;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                listReleaseIterator(li);
+                li = NULL;
+            }
+        }
+    }
+
+    for(i = 0; i < hiarray_n(results) && total_keynum > 0; i ++){
+        node = hiarray_get(results, i);
+        reply = (*node)->data;
+
+        if(value != NULL){
+            sdsfree(value);
+            value = NULL;
+        }
+
+        keynum = 0;
+        
+        if(reply == NULL || reply->type != REDIS_REPLY_STRING){
+            keynum = -1;
+        }else{
+            value = redis_reply_info_get_value(reply->str, reply->len, key);
+            if(value != NULL){
+                str_begin = strchr(value, '=');
+                str_end = strchr(value, ',');
+                if(str_begin == NULL || str_end == NULL){
+                    keynum = -1;
+                }else{
+                    str_begin ++;
+                    str_end--;
+                    if(str_end < str_begin){
+                        keynum = -1;
+                    }else{
+                        keynum = rct_atoll(str_begin, (int)(str_end-str_begin) + 1);
+                    }
+                }
+            }
+        }
+        
+        if(!ctx->simple){
+            if(keynum == -1){
+                log_stdout("%s[%s] is error", 
+                    (*node)->role == REDIS_ROLE_MASTER?"master":"slave",
+                    (*node)->addr);
+            }else{
+                log_stdout("%s[%s] has %lld keys %.2f%%", 
+                    (*node)->role == REDIS_ROLE_MASTER?"master":"slave",
+                    (*node)->addr, keynum,
+                    ((float)keynum/(float)total_keynum)*100);
+            }
+        }
+        
+        if(ctx->redis_role == RCT_REDIS_ROLE_ALL || 
+            ctx->redis_role == RCT_REDIS_ROLE_SLAVE){
+            slaves = (*node)->slaves;
+            if((*node)->role == REDIS_ROLE_MASTER &&
+                slaves != NULL){
+                li = listGetIterator(slaves, AL_START_HEAD);
+                while(ln = listNext(li)){
+                    slave = listNodeValue(ln);
+                    reply = slave->data;
+
+                    if(value != NULL){
+                        sdsfree(value);
+                        value = NULL;
+                    }
+
+                    keynum = 0;
+                    
+                    if(reply == NULL || reply->type != REDIS_REPLY_STRING){
+                        keynum = -1;
+                    }else{
+                        value = redis_reply_info_get_value(reply->str, reply->len, key);
+                        if(value != NULL){
+                            str_begin = strchr(value, '=');
+                            str_end = strchr(value, ',');
+                            if(str_begin == NULL || str_end == NULL){
+                                keynum = -1;
+                            }else{
+                                str_begin ++;
+                                str_end--;
+                                if(str_end < str_begin){
+                                    keynum = -1;
+                                }else{
+                                    keynum = rct_atoll(str_begin, (int)(str_end-str_begin) + 1);
+                                }
+                            }
+                        }
+                    }
+
+                    if(!ctx->simple){
+                        if(keynum == -1){
+                            log_stdout(" slave[%s] is error",
+                                slave->addr);
+                        }else{
+                            log_stdout(" slave[%s] has %lld keys %.2f%%",
+                                slave->addr,keynum,
+                                ((float)keynum/(float)total_keynum)*100);
+                        }
+                    }
+                    
+                }
+
+                listReleaseIterator(li);
+                li = NULL;
+            }
+            
+            if(!ctx->simple && ctx->redis_role == RCT_REDIS_ROLE_ALL) log_stdout("");
+        }
+    }
+
+    log_stdout("");
+
+    if(all_is_ok){
+        log_stdout("Cluster has %lld keys", 
+            total_keynum);
+    }else{
+        log_stdout("Some nodes are error, other nodes has %lld keys", 
+            total_keynum);
+    }
+}
+
+void async_reply_info_display(async_command *acmd)
+{
+    int i;
+    redisReply *reply;
+    char *str;
+    int len;
+    list *slaves;
+    listIter *li = NULL;
+    listNode *ln;
+    struct cluster_node **node, *slave;
+    struct hiarray *results = &acmd->results;
+    rctContext *ctx = acmd->ctx;
+    sds key, value;
+
+    if(hiarray_n(&ctx->args) != 1){
+        log_error("Error: args for % is not 1", acmd->command);
+        return;
+    }
+
+    key = *(sds*)hiarray_get(&ctx->args, 0);
+
+    hiarray_sort(results, redis_cluster_addr_cmp);
+
+    value = NULL;
+    
+    for(i = 0; i < hiarray_n(results); i ++){
+        node = hiarray_get(results, i);
+        reply = (*node)->data;
+
+        if(reply == NULL || reply->type != REDIS_REPLY_STRING){
+            str = NULL;
+            len = 0;
+        }else{
+            str = reply->str;
+            len = reply->len;
+        }
+
+        if(value != NULL){
+            sdsfree(value);
+            value = NULL;
+        }
+
+        value = redis_reply_info_get_value(str, len, key);
+        
+        if(!ctx->simple){
+            if(reply == NULL){
+                log_stdout("%s[%s] is error", 
+                    (*node)->role == REDIS_ROLE_MASTER?"master":"slave",
+                    (*node)->addr);
+            }else{
+                log_stdout("%s[%s] %s: %s", 
+                    (*node)->role == REDIS_ROLE_MASTER?"master":"slave",
+                    (*node)->addr,
+                    key,
+                    value?value:"NULL");
+            }
+        }
+        
+        if(ctx->redis_role == RCT_REDIS_ROLE_ALL || 
+            ctx->redis_role == RCT_REDIS_ROLE_SLAVE){
+            slaves = (*node)->slaves;
+            if((*node)->role == REDIS_ROLE_MASTER &&
+                slaves != NULL){
+                li = listGetIterator(slaves, AL_START_HEAD);
+                while(ln = listNext(li)){
+                    slave = listNodeValue(ln);
+                    reply = slave->data;
+
+                    if(reply == NULL || reply->type != REDIS_REPLY_STRING){
+                        str = NULL;
+                        len = 0;
+                    }else{
+                        str = reply->str;
+                        len = reply->len;
+                    }
+
+                    if(value != NULL){
+                        sdsfree(value);
+                        value = NULL;
+                    }
+
+                    value = redis_reply_info_get_value(str, len, key);
+                    
+                    if(!ctx->simple){
+                        if(reply == NULL){
+                            log_stdout(" slave[%s] is error",
+                                slave->addr);
+                        }else{
+                            log_stdout(" slave[%s] %s: %s",
+                                slave->addr,key,
+                                value?value:"NULL");
+                        }
+                    }
+                }
+
+                listReleaseIterator(li);
+                li = NULL;
+            }
+
+            if(!ctx->simple && ctx->redis_role == RCT_REDIS_ROLE_ALL) log_stdout("");
+        }
+    }
+
+    log_stdout("");
+
+    if(value != NULL){
+        sdsfree(value);
+    }
+}
+
+void async_reply_info_display_check(async_command *acmd)
+{
+    int i, all_is_ok, all_is_same;
+    redisReply *reply;
+    list *slaves;
+    listIter *li = NULL;
+    listNode *ln;
+    struct cluster_node **node, *slave;
+    struct hiarray *results = &acmd->results;
+    rctContext *ctx = acmd->ctx;
+    sds key, value, pre_value;
+
+    if(hiarray_n(&ctx->args) != 1){
+        log_error("Error: args for % is not 1", acmd->command);
+        return;
+    }
+
+    key = *(sds*)hiarray_get(&ctx->args, 0);
+
+    hiarray_sort(results, redis_cluster_addr_cmp);
+    
+    all_is_ok = 1;
+    all_is_same = 1;
+    pre_value = NULL;
+    value = NULL;
+    
+    for(i = 0; i < hiarray_n(results); i ++){
+        node = hiarray_get(results, i);
+        reply = (*node)->data;
+
+        if(value != NULL){
+            sdsfree(value);
+            value = NULL;
+        }
+
+        if(reply == NULL || reply->type != REDIS_REPLY_STRING){
+            value = NULL;
+        }else{
+            value = redis_reply_info_get_value(reply->str, reply->len, key);
+        }
+    
+        if(!ctx->simple){
+             if(reply == NULL){
+                log_stdout("%s[%s] is error", 
+                    (*node)->role == REDIS_ROLE_MASTER?"master":"slave",
+                    (*node)->addr);
+            }else{
+                log_stdout("%s[%s] %s: %s", 
+                (*node)->role == REDIS_ROLE_MASTER?"master":"slave",
+                (*node)->addr,
+                key,
+                value?value:"NULL");
+            }
+        }
+
+        if(value == NULL){
+            all_is_ok = 0;
+        }else{
+            if(pre_value != NULL){
+                if(all_is_same && sdscmp(pre_value, value)){
+                    all_is_same = 0;
+                }
+
+                sdsfree(pre_value);
+            }
+
+            pre_value = value;
+            value = NULL;
+        }
+        
+        if(ctx->redis_role == RCT_REDIS_ROLE_ALL || 
+            ctx->redis_role == RCT_REDIS_ROLE_SLAVE){
+            slaves = (*node)->slaves;
+            if((*node)->role == REDIS_ROLE_MASTER &&
+                slaves != NULL){
+                li = listGetIterator(slaves, AL_START_HEAD);
+                while(ln = listNext(li)){
+                    slave = listNodeValue(ln);
+                    reply = slave->data;
+
+                    if(value != NULL){
+                        sdsfree(value);
+                        value = NULL;
+                    }
+
+                    if(reply == NULL || reply->type != REDIS_REPLY_STRING){
+                        value = NULL;
+                    }else{
+                        value = redis_reply_info_get_value(reply->str, reply->len, key);
+                    }
+                    
+                    if(!ctx->simple){
+                        if(reply == NULL){
+                            log_stdout(" slave[%s] is error",
+                                slave->addr);
+                        }else{
+                            log_stdout(" slave[%s] %s: %s",
+                                slave->addr,key,
+                                value?value:"NULL");
+                        }
+                    }
+
+                    if(value == NULL){
+                        all_is_ok = 0;
+                    }else{
+                        if(pre_value != NULL){
+                            if(all_is_same && sdscmp(pre_value, value)){
+                                all_is_same = 0;
+                            }
+
+                            sdsfree(pre_value);
+                        }
+
+                        pre_value = value;
+                        value = NULL;
+                    }
+                }
+
+                listReleaseIterator(li);
+                li = NULL;
+            }
+
+            if(!ctx->simple && ctx->redis_role == RCT_REDIS_ROLE_ALL) log_stdout("");
+        }
+    }
+
+    log_stdout("");
+
+    if(all_is_ok && all_is_same){
+        log_stdout("All nodes \"%s\" are SAME: %s", 
+            key, pre_value?pre_value:"NULL");
+    }else if(all_is_ok && !all_is_same){
+        log_stdout("Some nodes \"%s\" are DIFFERENT", key);
+    }else if(!all_is_ok && all_is_same){
+        log_stdout("Some nodes are error, others \"%s\" are SAME: %s", 
+            key, pre_value?pre_value:"NULL");
+    }else{
+        log_stdout("Some nodes are error, others \"%s\" are DIFFERENT", key);
+    }
+
+    if(value != NULL){
+        sdsfree(value);
+    }
+
+    if(pre_value != NULL){
+        sdsfree(pre_value);
+    }
+}
+
+redisReply *redis_reply_clone(redisReply *r)
+{
+    int j;
+    redisReply *reply = NULL;
+
+    if(r == NULL){
+        return NULL;
+    }
+
+    reply = rct_alloc(sizeof(*reply));
+    if(reply == NULL){
+        goto enomem;
+    }
+
+    reply->type = r->type;
+    reply->integer = r->integer;
+    reply->len = r->len;
+    reply->str = NULL;
+    reply->elements = r->elements;
+    reply->element = NULL;
+
+    switch(r->type) {
+    case REDIS_REPLY_INTEGER:
+        break; /* Nothing to free */
+    case REDIS_REPLY_ARRAY:
+        if (r->element != NULL && r->elements > 0) {
+            reply->element = rct_alloc(r->elements * sizeof(redisReply *));
+            if(reply->element == NULL){
+                goto enomem;
+            }
+            
+            for (j = 0; j < r->elements; j++){
+                if (r->element[j] != NULL){
+                    reply->element[j] = 
+                        redis_reply_clone(r->element[j]);
+                    if(reply->element[j] == NULL){
+                        goto enomem;
+                    }
+                }else{
+                    reply->element[j] = NULL;
+                }
+            }
+        }
+        
+        break;
+    case REDIS_REPLY_ERROR:
+    case REDIS_REPLY_STATUS:
+    case REDIS_REPLY_STRING:
+        if (r->str != NULL){
+            reply->str = rct_strndup(r->str, r->len);
+            if(reply->str == NULL){
+                goto enomem;
+            }
+        }
+        
+        break;
+    }
+    
+    return reply;
+
+enomem:
+
+    log_error("Out of memory");
+
+    if(reply != NULL){
+        freeReplyObject(reply);
+    }
+
+    return NULL;
 }
 
 static void *event_run(void *args)

@@ -66,6 +66,7 @@ typedef int err_t;     /* error type */
 #include <time.h>
 #include <getopt.h>
 #include <pthread.h>
+#include <stdlib.h>
 
 #include <hircluster.h>
 #include <hiarray.h>
@@ -78,6 +79,8 @@ typedef int err_t;     /* error type */
 #include "rct_command.h"
 #include "rct_mttlist.h"
 #include "rct_locklist.h"
+
+struct async_command;
 
 struct instance {
     int             log_level;                   /* log level */
@@ -105,15 +108,19 @@ struct instance {
 
 typedef struct rctContext {
     redisClusterContext *cc;
-    dict *commands;             /* Command table */
+    dict *commands; /* Command table */
     char *address;
     char *cmd;
     uint8_t redis_role;
     uint8_t simple;
-    int             thread_count;
-    uint64_t        buffer_size;
-    struct hiarray args;
+    int thread_count;
+    uint64_t buffer_size;
+    struct hiarray args; /* sds[] */
+    struct async_command *acmd;
 }rctContext;
+
+rctContext *create_context(struct instance *nci);
+void destroy_context(rctContext *rct_ctx);
 
 void nodes_get_state(rctContext *ctx, int type);
 void slots_state(rctContext *ctx, int type);
@@ -124,6 +131,48 @@ void cluster_rebalance(rctContext *ctx, int type);
 void do_command(rctContext *ctx, int type);
 void do_command_node_by_node(rctContext *ctx, int type);
 void cluster_del_keys(rctContext *ctx, int type);
+
+struct async_command;
+struct aeEventLoop;
+
+typedef void (async_callback_reply)(struct async_command*);
+
+typedef struct async_command{
+    rctContext *ctx;
+    struct aeEventLoop *loop;
+    redisClusterAsyncContext *acc;  /* handler to the redis cluster */
+    dict *nodes;    /* all the nodes in the redis cluster */
+    sds command;    /* command need to run */
+    struct hiarray *parameters; /* sds[], parameters for the command */
+    int role;   /* target role to run the command */    
+    int nodes_count;    /* node count that need do the command in one step */
+    int finished_count; /* finished node count in one step */
+    struct hiarray results;  //type: cluster_node
+    async_callback_reply *callback;
+    int stop;   /* loop stop ? */
+    int step;   /* the command step count */
+}async_command;
+
+typedef struct async_callback_data{
+    async_command *acmd;
+    struct cluster_node *node;
+}async_callback_data;
+
+int async_command_init(async_command *acmd, rctContext *ctx, char *addrs, int flags);
+void async_command_deinit(async_command *acmd);
+
+int cluster_async_call(rctContext *ctx, char *command, struct hiarray *parameters, int role, async_callback_reply *callback);
+redisReply *redis_reply_clone(redisReply *r);
+
+void async_reply_status(async_command *acmd);
+void async_reply_string(async_command *acmd);
+void async_reply_display(async_command *acmd);
+void async_reply_display_check(async_command *acmd);
+void async_reply_maxmemory(async_command *acmd);
+void async_reply_info_memory(async_command *acmd);
+void async_reply_info_keynum(async_command *acmd);
+void async_reply_info_display(async_command *acmd);
+void async_reply_info_display_check(async_command *acmd);
 
 #endif
 
