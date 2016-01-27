@@ -94,8 +94,9 @@ void cluster_node_state(rctContext *ctx , int type)
 
 void cluster_flushall(rctContext *ctx , int type)
 {
+    ctx->redis_role = RCT_REDIS_ROLE_MASTER;
     cluster_async_call(ctx, "flushall", NULL, 
-        RCT_REDIS_ROLE_MASTER, async_reply_status);
+        ctx->redis_role, async_reply_status);
 }
 
 void cluster_config_get(rctContext *ctx , int type)
