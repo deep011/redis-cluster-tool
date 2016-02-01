@@ -549,7 +549,7 @@ r_status _log_files_circular_maintain(const char * file, struct logger *l)
     
     const int max_array_id = LOG_FILE_COUNT_TO_STAY - 1;
 
-    ASSERT(l->circular_cur_pos <= max_array_id);
+    RCT_ASSERT(l->circular_cur_pos <= max_array_id);
     
     if(l->circular_full)
     {

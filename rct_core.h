@@ -151,6 +151,7 @@ typedef struct async_command{
     async_callback_reply *callback;
     int stop;   /* loop stop ? */
     int step;   /* the command step count */
+    list *black_nodes;
 }async_command;
 
 typedef struct async_callback_data{
@@ -173,6 +174,7 @@ void async_reply_info_memory(async_command *acmd);
 void async_reply_info_keynum(async_command *acmd);
 void async_reply_info_display(async_command *acmd);
 void async_reply_info_display_check(async_command *acmd);
+void async_reply_check_cluster(async_command *acmd);
 
 #endif
 

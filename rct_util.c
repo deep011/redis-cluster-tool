@@ -371,7 +371,7 @@ _rct_alloc(size_t size, const char *name, int line)
 {
     void *p;
 
-    ASSERT(size != 0);
+    RCT_ASSERT(size != 0);
 
     p = malloc(size);
     if (p == NULL) {
@@ -407,7 +407,7 @@ _rct_realloc(void *ptr, size_t size, const char *name, int line)
 {
     void *p;
 
-    ASSERT(size != 0);
+    RCT_ASSERT(size != 0);
 
     p = realloc(ptr, size);
     if (p == NULL) {
@@ -422,7 +422,7 @@ _rct_realloc(void *ptr, size_t size, const char *name, int line)
 void
 _rct_free(void *ptr, const char *name, int line)
 {
-    ASSERT(ptr != NULL);
+    RCT_ASSERT(ptr != NULL);
     log_debug(LOG_VVERB, "free(%p) @ %s:%d", ptr, name, line);
     free(ptr);
 }
@@ -615,7 +615,7 @@ rct_resolve_inet(char *name, int port, struct sockinfo *si)
     char *node, service[RCT_UINTMAX_MAXLEN];
     bool found;
 
-    ASSERT(rct_valid_port(port));
+    RCT_ASSERT(rct_valid_port(port));
 
     memset(&hints, 0, sizeof(hints));
     hints.ai_flags = AI_NUMERICSERV;

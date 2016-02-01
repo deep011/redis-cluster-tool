@@ -156,29 +156,29 @@ ssize_t _rct_recvn(int sd, void *vptr, size_t n);
  */
 #ifdef RCT_ASSERT_PANIC
 
-#define ASSERT(_x) do {                         \
+#define RCT_ASSERT(_x) do {                         \
     if (!(_x)) {                                \
         rct_assert(#_x, __FILE__, __LINE__, 1);  \
     }                                           \
 } while (0)
 
-#define NOT_REACHED() ASSERT(0)
+#define RCT_NOT_REACHED() RCT_ASSERT(0)
 
 #elif RCT_ASSERT_LOG
 
-#define ASSERT(_x) do {                         \
+#define RCT_ASSERT(_x) do {                         \
     if (!(_x)) {                                \
         rct_assert(#_x, __FILE__, __LINE__, 0);  \
     }                                           \
 } while (0)
 
-#define NOT_REACHED() ASSERT(0)
+#define RCT_NOT_REACHED() RCT_ASSERT(0)
 
 #else
 
-#define ASSERT(_x)
+#define RCT_ASSERT(_x)
 
-#define NOT_REACHED()
+#define RCT_NOT_REACHED()
 
 #endif
 

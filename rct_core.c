@@ -21,14 +21,12 @@ int dictSdsKeyCompare(void *privdata, const void *key1,
     return memcmp(key1, key2, l1) == 0;
 }
 
-
 void dictSdsDestructor(void *privdata, void *val)
 {
     DICT_NOTUSED(privdata);
 
     sdsfree(val);
 }
-
 
 dictType commandTableDictType = {
     dictSdsHash,                /* hash function */
@@ -184,6 +182,14 @@ redis_node_config_value_cmp(const void *t1, const void *t2)
     const redis_node *s1 = t1, *s2 = t2;
 
     return sdscmp(s1->config_value, s2->config_value);
+}
+
+static int
+elem_sds_cmp(const void *t1, const void *t2)
+{
+    const sds *s1 = t1, *s2 = t2;
+
+    return sdscmp(*s1, *s2);
 }
 
 static char *node_role_name(cluster_node *node)
@@ -1939,6 +1945,7 @@ int async_command_init(async_command *acmd, rctContext *ctx, char *addrs, int fl
     hiarray_null(&acmd->results);
     acmd->stop = 0;
     acmd->step = 0;
+    acmd->black_nodes = NULL;
 
     acmd->ctx = ctx;
     
@@ -1965,6 +1972,12 @@ int async_command_init(async_command *acmd, rctContext *ctx, char *addrs, int fl
     }
 
     acmd->stop = 1;
+
+    acmd->black_nodes = listCreate();
+    if(acmd->black_nodes == NULL){
+        log_error("Create black_nodes list failed: out of memory.");
+        goto error;
+    }
 
     return RCT_OK;
 
@@ -2024,6 +2037,11 @@ void async_command_deinit(async_command *acmd)
     if(acmd->loop != NULL){
         aeDeleteEventLoop(acmd->loop);
         acmd->loop = NULL;
+    }
+
+    if(acmd->black_nodes != NULL){
+        listRelease(acmd->black_nodes);
+        acmd->black_nodes = NULL;
     }
     
     acmd->callback = NULL;
@@ -2575,7 +2593,7 @@ static sds redis_reply_to_string(redisReply *reply)
         break;
     default:
         str = NULL;
-        NOT_REACHED();
+        RCT_NOT_REACHED();
         break;
     }
 
@@ -3621,6 +3639,508 @@ void async_reply_info_display_check(async_command *acmd)
 
     if(pre_value != NULL){
         sdsfree(pre_value);
+    }
+}
+
+static sds get_cluster_config_signature(dict *nodes)
+{
+    int ret;
+    sds csign, csigns;
+    dictIterator *di = NULL;
+    dictEntry *de;
+    listIter *lit = NULL;
+    listNode *ln;
+    cluster_node *master;
+    cluster_slot *slot;
+    uint32_t total_len;
+    struct hiarray signatures;
+    sds *elem;
+    
+    if(nodes == NULL){
+        return NULL;
+    }
+
+    total_len = 0;
+    csign = NULL;
+    ret = hiarray_init(&signatures, dictSize(nodes), sizeof(sds));
+    if(ret != HI_OK){
+        log_stdout("Out of memory");
+        return NULL;
+    }
+    
+    di = dictGetIterator(nodes);
+    
+    while((de = dictNext(di))) {
+        master = dictGetEntryVal(de);
+        csign = sdsdup(master->name);
+        if(csign == NULL){
+            log_stdout("Out of memory.");
+            goto error;
+        }
+        
+        csign = sdscatsds(csign, master->addr);
+        if(csign == NULL){
+            log_stdout("Out of memory.");
+            goto error;
+        }
+        
+        lit = listGetIterator(master->slots, AL_START_HEAD);
+        if(lit == NULL){
+            log_stdout("Out of memory.");
+            goto error;
+        }
+        
+        while((ln = listNext(lit))){
+            slot = listNodeValue(ln);
+            csign = sdscatfmt(csign, "%u-%u,", 
+                slot->start, slot->end);
+            if(csign == NULL){
+                log_stdout("Out of memory.");
+                goto error;
+            }
+        }
+        
+        listReleaseIterator(lit);
+        lit = NULL;
+
+        total_len += sdslen(csign);
+        elem = hiarray_push(&signatures);
+        *elem = csign;
+    }
+
+    dictReleaseIterator(di);
+
+    hiarray_sort(&signatures, elem_sds_cmp);
+
+    csigns = sdsempty();
+    csigns = sdsMakeRoomFor(csigns, total_len + 2);
+    
+    while(hiarray_n(&signatures)){
+        elem = hiarray_pop(&signatures);
+        csigns = sdscatsds(csigns, *elem);
+        sdsfree(*elem);
+    }
+
+    hiarray_deinit(&signatures);
+
+    return csigns;
+
+error:
+
+    sdsfree(csign);
+
+    if(lit){
+        listReleaseIterator(lit);
+    }
+
+    if(di){
+        dictReleaseIterator(di);
+    }
+    
+    return NULL;
+}
+
+static int check_cluster_config_signature(dict *nodes_infos)
+{
+    dict *nodes;
+    sds csign_pre = NULL, csign = NULL;
+    dictIterator *di_nodes = NULL;
+    dictEntry *de_nodes;
+    sds addr_pre;
+
+    if(nodes_infos == NULL){
+        return RCT_ERROR;
+    }
+
+    csign_pre = NULL;
+    addr_pre = NULL;
+    
+    di_nodes = dictGetIterator(nodes_infos);
+    while((de_nodes = dictNext(di_nodes))){
+        nodes = dictGetEntryVal(de_nodes);
+
+        csign = get_cluster_config_signature(nodes);
+        if(csign == NULL){
+            goto error;
+        }
+
+        if(csign_pre == NULL){
+            addr_pre = dictGetEntryKey(de_nodes);
+            csign_pre = csign;
+            csign = NULL;
+        }else if(sdscmp(csign_pre, csign) == 0){
+            addr_pre = dictGetEntryKey(de_nodes);
+            sdsfree(csign_pre);
+            csign_pre = csign;
+            csign = NULL;
+        }else{
+            log_stdout("node[%s] and node[%s] cluster conf are different.", 
+                addr_pre, dictGetEntryKey(de_nodes));
+            log_stdout("node[%s]: %s", addr_pre, csign_pre);
+            log_stdout("node[%s]: %s", dictGetEntryKey(de_nodes), csign);
+            goto error;
+        }
+    }
+
+    dictReleaseIterator(di_nodes);
+    di_nodes = NULL;
+
+    return RCT_OK;
+
+error:
+
+    if(di_nodes != NULL){
+        dictReleaseIterator(di_nodes);
+    }
+
+    if(csign_pre != NULL){
+        sdsfree(csign_pre);
+    }
+
+    if(csign != NULL){
+        sdsfree(csign);
+    }
+
+    return RCT_ERROR;
+}
+
+static int check_cluster_slot_coverage(dict *nodes)
+{
+    dictIterator *di = NULL;
+    dictEntry *de;
+    listIter *lit = NULL;
+    listNode *ln;
+    cluster_node *master;
+    cluster_slot *slot;
+    unsigned char slots[REDIS_CLUSTER_SLOTS];
+    unsigned char wished[REDIS_CLUSTER_SLOTS];
+
+    if(nodes == NULL){
+        return RCT_ERROR;
+    }
+    
+    memset(slots, '0', REDIS_CLUSTER_SLOTS);
+    memset(wished, '1', REDIS_CLUSTER_SLOTS);
+
+    di = dictGetIterator(nodes);
+    
+    while((de = dictNext(di))) {
+        master = dictGetEntryVal(de);
+
+        lit = listGetIterator(master->slots, AL_START_HEAD);
+        if(lit == NULL){
+            log_stdout("Out of memory.");
+            goto error;
+        }
+        
+        while((ln = listNext(lit))){
+            slot = listNodeValue(ln);
+            memset(slots+slot->start, '1', slot->end-slot->start+1);
+        }
+        
+        listReleaseIterator(lit);
+        lit = NULL;
+    }
+
+    dictReleaseIterator(di);
+
+    if(memcmp(slots, wished, REDIS_CLUSTER_SLOTS)){
+        return RCT_ERROR;
+    }
+
+    return RCT_OK;
+
+error:
+
+    if(lit){
+        listReleaseIterator(lit);
+    }
+
+    if(di){
+        dictReleaseIterator(di);
+    }
+    
+    return RCT_ERROR;
+}
+
+typedef struct open_slot_data{
+    uint32_t slot_num;  /* slot number */
+    struct hiarray *source; /* this slot import from what nodes */
+    struct hiarray *target; /* this slot migrate to what nodes */
+}open_slot_data;
+
+static open_slot_data *open_slot_data_create(void)
+{
+    open_slot_data *osdata;
+
+    osdata = rct_alloc(sizeof(*osdata));
+    if(osdata == NULL){
+        return NULL;
+    }
+
+    osdata->slot_num = 0;
+    osdata->source = NULL;
+    osdata->target = NULL;
+
+    return osdata;
+}
+
+static void open_slot_data_destroy(open_slot_data *osdata)
+{
+    if(osdata == NULL){
+        return;
+    }
+
+    if(osdata->source){
+        osdata->source->nelem = 0;
+        hiarray_destroy(osdata->source);
+    }
+
+    if(osdata->target){
+        osdata->target->nelem = 0;
+        hiarray_destroy(osdata->target);
+    }
+
+    rct_free(osdata);
+}
+
+static struct hiarray *get_cluster_open_slot(dict *nodes_infos)
+{
+    int i;
+    dict *nodes;
+    dictIterator *di_nodes = NULL;
+    dictEntry *de_nodes, *de_node;
+    sds addr;
+    cluster_node *master, **node_elem;
+    copen_slot **oslot;
+    struct hiarray *osdatas;
+    open_slot_data *osdata;
+    open_slot_data *slots[REDIS_CLUSTER_SLOTS];
+
+    if(nodes_infos == NULL){
+        return NULL;
+    }
+
+    osdatas = hiarray_create(1, sizeof(open_slot_data));
+    if(osdatas == NULL){
+        return NULL;
+    }
+
+    memset(slots, 0, REDIS_CLUSTER_SLOTS*sizeof(open_slot_data *));
+    
+    di_nodes = dictGetIterator(nodes_infos);
+    while((de_nodes = dictNext(di_nodes))){
+        addr = dictGetEntryKey(de_nodes);
+        nodes = dictGetEntryVal(de_nodes);
+
+         de_node = dictFind(nodes, addr);
+         if(de_node == NULL){
+            continue;
+         }
+
+         master = dictGetEntryVal(de_node);
+         if(master->migrating){
+            for(i = 0; i < hiarray_n(master->migrating); i ++){
+                oslot = hiarray_get(master->migrating, i);
+                
+                if(slots[(*oslot)->slot_num] == NULL){
+                    osdata = hiarray_push(osdatas);
+                    if(osdata == NULL){
+                        log_stdout("Out of memory");
+                        goto error;
+                    }
+
+                    slots[(*oslot)->slot_num] = osdata;
+                }
+
+                osdata = slots[(*oslot)->slot_num];
+                if(osdata->source == NULL){
+                    osdata->source = hiarray_create(1, sizeof(cluster_node *));
+                    if(osdata->source == NULL){
+                        log_stdout("Out of memory");
+                        goto error;
+                    }
+                }
+
+                node_elem = hiarray_push(osdata->source);
+                *node_elem = (*oslot)->node;
+            }
+         }
+
+         if(master->importing){
+            for(i = 0; i < hiarray_n(master->importing); i ++){
+                oslot = hiarray_get(master->importing, i);
+                
+                if(slots[(*oslot)->slot_num] == NULL){
+                    osdata = hiarray_push(osdatas);
+                    if(osdata == NULL){
+                        log_stdout("Out of memory");
+                        goto error;
+                    }
+
+                    slots[(*oslot)->slot_num] = osdata;
+                }
+
+                osdata = slots[(*oslot)->slot_num];
+                if(osdata->target == NULL){
+                    osdata->target = hiarray_create(1, sizeof(cluster_node *));
+                    if(osdata->target == NULL){
+                        log_stdout("Out of memory");
+                        goto error;
+                    }
+                }
+
+                node_elem = hiarray_push(osdata->target);
+                *node_elem = (*oslot)->node;
+            }
+         }
+    }
+
+    dictReleaseIterator(di_nodes);
+    di_nodes = NULL;
+
+    return osdatas;
+
+error:
+
+    if(di_nodes != NULL){
+        dictReleaseIterator(di_nodes);
+    }
+
+    osdatas->nelem = 0;
+    hiarray_destroy(osdatas);
+
+    return NULL;
+}
+
+void dictDestructor(void *privdata, void *val)
+{
+    DICT_NOTUSED(privdata);
+
+    dictRelease(val);
+}
+
+dictType nodesConfDictType = {
+    dictSdsHash,                /* hash function */
+    NULL,                       /* key dup */
+    NULL,                       /* val dup */
+    dictSdsKeyCompare,          /* key compare */
+    NULL,                       /* key destructor */
+    dictDestructor              /* val destructor */
+};
+
+void async_reply_check_cluster(async_command *acmd)
+{
+    int ret, i;
+    redisReply *reply;
+    char *str;
+    list *slaves;
+    listIter *li = NULL;
+    listNode *ln;
+    struct cluster_node **elem_node, *node, *slave;
+    struct hiarray *results = &acmd->results;
+    rctContext *ctx = acmd->ctx;
+    dict *nodes, *nodes_not_null;
+    copen_slot **oslot;
+    dict *nodes_infos;
+    struct hiarray *osdatas;
+    open_slot_data *osdata;
+
+    nodes_infos = dictCreate(&nodesConfDictType, NULL);
+    if(nodes_infos == NULL){
+        log_error("Out of memory");
+        goto done;
+    }
+    
+    for(i = 0; i < hiarray_n(results); i ++){
+        elem_node = hiarray_get(results, i);
+        reply = (*elem_node)->data;
+
+        if(reply == NULL || reply->type != REDIS_REPLY_STRING){
+            log_warn("Warn: %s[%s] is error: %s.", 
+                (*elem_node)->role == REDIS_ROLE_MASTER?"master":"slave",
+                (*elem_node)->addr, reply==NULL?"NULL":reply->str);
+            continue;
+        }
+
+        nodes = parse_cluster_nodes(NULL, reply->str, reply->len, 
+            HIRCLUSTER_FLAG_ADD_SLAVE|HIRCLUSTER_FLAG_ADD_OPENSLOT);
+        if(nodes == NULL){
+            log_warn("Warn: %s[%s] \"cluster nodes\" reply parse error", 
+                (*elem_node)->role == REDIS_ROLE_MASTER?"master":"slave",
+                (*elem_node)->addr);
+            continue;
+        }
+
+        dictAdd(nodes_infos, (*elem_node)->addr, nodes);
+        nodes_not_null = nodes;
+        
+        if(ctx->redis_role == RCT_REDIS_ROLE_ALL || 
+            ctx->redis_role == RCT_REDIS_ROLE_SLAVE){
+            slaves = (*elem_node)->slaves;
+            if((*elem_node)->role == REDIS_ROLE_MASTER &&
+                slaves != NULL){
+                li = listGetIterator(slaves, AL_START_HEAD);
+                while(ln = listNext(li)){
+                    slave = listNodeValue(ln);
+                    reply = slave->data;
+
+                    if(reply == NULL || reply->type != REDIS_REPLY_STRING){
+                        log_warn("Warn: slave[%s] is error: %s.", 
+                            slave->addr, reply==NULL?"NULL":reply->str);
+                        continue;
+                    }
+
+                    nodes = parse_cluster_nodes(NULL, reply->str, reply->len, 
+                        HIRCLUSTER_FLAG_ADD_SLAVE|HIRCLUSTER_FLAG_ADD_OPENSLOT);
+                    if(nodes == NULL){
+                        log_warn("Warn: slave[%s] \"cluster nodes\" reply parse error", 
+                            (*elem_node)->addr);
+                        continue;
+                    }
+
+                    dictAdd(nodes_infos, slave->addr, nodes);
+                }
+
+                listReleaseIterator(li);
+                li = NULL;
+            }
+        }
+    }
+
+    ret = check_cluster_config_signature(nodes_infos);
+    if(ret == RCT_OK){
+        log_stdout("All nodes agree about slots configuration.");
+        ret = check_cluster_slot_coverage(nodes_not_null);
+        if(ret == RCT_OK){
+            log_stdout("All 16384 slots covered.");
+        }else{
+            log_stdout("Not all 16384 slots covered.");
+        }
+    }
+
+    /*
+    osdatas = get_cluster_open_slot(nodes_infos);
+    if(osdatas == NULL){
+        log_stdout("Get cluster open slot failed.");
+        goto done;
+    }
+
+    if(hiarray_n(osdatas) == 0){
+        log_stdout("No open slots.");
+    }else{
+        for(i = 0; i < hiarray_n(osdatas); i ++){
+            osdata = hiarray_get(osdatas, i);
+            log_stdout("%u slot opened", osdata->slot_num);
+        }
+    }
+    */
+    log_stdout("");
+
+done:
+
+    if(nodes_infos != NULL){
+        dictRelease(nodes_infos);
     }
 }
 

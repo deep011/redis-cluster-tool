@@ -5,6 +5,8 @@
 struct RCTCommand rctCommandTable[] = {
     {RCT_CMD_CLUSTER_STATE, "Show the cluster state.", 
         cluster_state, -1, 0, 0, 0},
+    {RCT_CMD_CLUSTER_CHECK, "Check the cluster.", 
+        cluster_check, -1, 0, 0, 0},
     {RCT_CMD_CLUSTER_USED_MEMORY, "Show the cluster used memory.", 
         cluster_used_memory, -1, 0, 0, 0},
     {RCT_CMD_CLUSTER_KEYS_NUM, "Show the cluster holds keys num.", 
@@ -50,19 +52,10 @@ void cluster_state(rctContext *ctx , int type)
         ctx->redis_role, async_reply_info_display_check);
 }
 
-void cluster_used_memory(rctContext *ctx , int type)
-{
-    sds *str;
-    
-    if(hiarray_n(&ctx->args) != 0){
-        log_error("Error: there can not have args for command %s", ctx->cmd);
-    }
-
-    str = hiarray_push(&ctx->args);
-    *str = sdsnew("used_memory");
-    
-    cluster_async_call(ctx, "info", NULL, 
-        ctx->redis_role, async_reply_info_memory);
+void cluster_check(rctContext *ctx , int type)
+{    
+    cluster_async_call(ctx, "cluster nodes", NULL, 
+        ctx->redis_role, async_reply_check_cluster);
 }
 
 void cluster_keys_num(rctContext *ctx , int type)
@@ -78,6 +71,21 @@ void cluster_keys_num(rctContext *ctx , int type)
     
     cluster_async_call(ctx, "info", NULL, 
         ctx->redis_role, async_reply_info_keynum);
+}
+
+void cluster_used_memory(rctContext *ctx , int type)
+{
+    sds *str;
+    
+    if(hiarray_n(&ctx->args) != 0){
+        log_error("Error: there can not have args for command %s", ctx->cmd);
+    }
+
+    str = hiarray_push(&ctx->args);
+    *str = sdsnew("used_memory");
+    
+    cluster_async_call(ctx, "info", NULL, 
+        ctx->redis_role, async_reply_info_memory);
 }
 
 void cluster_cluster_state(rctContext *ctx , int type)

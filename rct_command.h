@@ -2,6 +2,7 @@
 #define _RCT_COMMAND_H_
 
 #define RCT_CMD_CLUSTER_STATE			"cluster_state"
+#define RCT_CMD_CLUSTER_CHECK		    "cluster_check"
 #define RCT_CMD_CLUSTER_KEYS_NUM		"cluster_keys_num"
 #define RCT_CMD_CLUSTER_USED_MEMORY		"cluster_used_memory"
 #define RCT_CMD_CLUSTER_NODE_INFO		"cluster_node_info"
@@ -64,5 +65,6 @@ void cluster_flushall(struct rctContext *ctx, int type);
 void cluster_config_get(struct rctContext *ctx , int type);
 void cluster_config_set(struct rctContext *ctx , int type);
 void cluster_config_rewrite(struct rctContext *ctx , int type);
+void cluster_check(struct rctContext *ctx , int type);
 
 #endif
