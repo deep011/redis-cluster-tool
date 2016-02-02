@@ -3869,6 +3869,19 @@ typedef struct open_slot_data{
     struct hiarray *target; /* this slot migrate to what nodes */
 }open_slot_data;
 
+static int open_slot_data_init(open_slot_data *osdata)
+{
+    if(osdata == NULL){
+        return RCT_ERROR;
+    }
+    
+    osdata->slot_num = 0;
+    osdata->source = NULL;
+    osdata->target = NULL;
+
+    return RCT_OK;
+}
+
 static open_slot_data *open_slot_data_create(void)
 {
     open_slot_data *osdata;
@@ -3878,9 +3891,7 @@ static open_slot_data *open_slot_data_create(void)
         return NULL;
     }
 
-    osdata->slot_num = 0;
-    osdata->source = NULL;
-    osdata->target = NULL;
+    open_slot_data_init(osdata);
 
     return osdata;
 }
@@ -3906,7 +3917,7 @@ static void open_slot_data_destroy(open_slot_data *osdata)
 
 static struct hiarray *get_cluster_open_slot(dict *nodes_infos)
 {
-    int i;
+    uint32_t i, idx;
     dict *nodes;
     dictIterator *di_nodes = NULL;
     dictEntry *de_nodes, *de_node;
@@ -3914,14 +3925,14 @@ static struct hiarray *get_cluster_open_slot(dict *nodes_infos)
     cluster_node *master, **node_elem;
     copen_slot **oslot;
     struct hiarray *osdatas;
-    open_slot_data *osdata;
+    open_slot_data *osdata, **osdata_elem;
     open_slot_data *slots[REDIS_CLUSTER_SLOTS];
 
     if(nodes_infos == NULL){
         return NULL;
     }
 
-    osdatas = hiarray_create(1, sizeof(open_slot_data));
+    osdatas = hiarray_create(1, sizeof(open_slot_data *));
     if(osdatas == NULL){
         return NULL;
     }
@@ -3942,18 +3953,27 @@ static struct hiarray *get_cluster_open_slot(dict *nodes_infos)
          if(master->migrating){
             for(i = 0; i < hiarray_n(master->migrating); i ++){
                 oslot = hiarray_get(master->migrating, i);
-                
-                if(slots[(*oslot)->slot_num] == NULL){
-                    osdata = hiarray_push(osdatas);
+                idx = (*oslot)->slot_num;
+                if(slots[idx] == NULL){
+                    osdata_elem = hiarray_push(osdatas);
+                    if(osdata_elem == NULL){
+                        log_stdout("Out of memory");
+                        goto error;
+                    }
+                    
+                    osdata = open_slot_data_create();
                     if(osdata == NULL){
                         log_stdout("Out of memory");
                         goto error;
                     }
 
-                    slots[(*oslot)->slot_num] = osdata;
+                    osdata->slot_num = idx;
+                    *osdata_elem = osdata;
+                    slots[idx] = osdata;
                 }
 
-                osdata = slots[(*oslot)->slot_num];
+                osdata = slots[idx];
+                RCT_ASSERT(osdata->slot_num == idx);
                 if(osdata->source == NULL){
                     osdata->source = hiarray_create(1, sizeof(cluster_node *));
                     if(osdata->source == NULL){
@@ -3970,18 +3990,27 @@ static struct hiarray *get_cluster_open_slot(dict *nodes_infos)
          if(master->importing){
             for(i = 0; i < hiarray_n(master->importing); i ++){
                 oslot = hiarray_get(master->importing, i);
-                
-                if(slots[(*oslot)->slot_num] == NULL){
-                    osdata = hiarray_push(osdatas);
+                idx = (*oslot)->slot_num;
+                if(slots[idx] == NULL){
+                    osdata_elem = hiarray_push(osdatas);
+                    if(osdata_elem == NULL){
+                        log_stdout("Out of memory");
+                        goto error;
+                    }
+
+                    osdata = open_slot_data_create();
                     if(osdata == NULL){
                         log_stdout("Out of memory");
                         goto error;
                     }
 
-                    slots[(*oslot)->slot_num] = osdata;
+                    osdata->slot_num = idx;
+                    *osdata_elem = osdata;
+                    slots[idx] = osdata;
                 }
 
-                osdata = slots[(*oslot)->slot_num];
+                osdata = slots[idx];
+                RCT_ASSERT(osdata->slot_num == idx);
                 if(osdata->target == NULL){
                     osdata->target = hiarray_create(1, sizeof(cluster_node *));
                     if(osdata->target == NULL){
@@ -4007,8 +4036,13 @@ error:
         dictReleaseIterator(di_nodes);
     }
 
-    osdatas->nelem = 0;
-    hiarray_destroy(osdatas);
+    if(osdatas){
+        while(hiarray_n(osdatas)){           
+            osdata_elem = hiarray_pop(osdatas);
+            open_slot_data_destroy(*osdata_elem);
+        }
+        hiarray_destroy(osdatas);
+    }
 
     return NULL;
 }
@@ -4031,7 +4065,8 @@ dictType nodesConfDictType = {
 
 void async_reply_check_cluster(async_command *acmd)
 {
-    int ret, i;
+    int ret;
+    uint32_t i, k;
     redisReply *reply;
     char *str;
     list *slaves;
@@ -4043,8 +4078,8 @@ void async_reply_check_cluster(async_command *acmd)
     dict *nodes, *nodes_not_null;
     copen_slot **oslot;
     dict *nodes_infos;
-    struct hiarray *osdatas;
-    open_slot_data *osdata;
+    struct hiarray *osdatas = NULL;
+    open_slot_data **osdata;
 
     nodes_infos = dictCreate(&nodesConfDictType, NULL);
     if(nodes_infos == NULL){
@@ -4052,6 +4087,8 @@ void async_reply_check_cluster(async_command *acmd)
         goto done;
     }
     
+    log_stdout("Checking cluster ...");
+
     for(i = 0; i < hiarray_n(results); i ++){
         elem_node = hiarray_get(results, i);
         reply = (*elem_node)->data;
@@ -4118,8 +4155,7 @@ void async_reply_check_cluster(async_command *acmd)
             log_stdout("Not all 16384 slots covered.");
         }
     }
-
-    /*
+    
     osdatas = get_cluster_open_slot(nodes_infos);
     if(osdatas == NULL){
         log_stdout("Get cluster open slot failed.");
@@ -4129,18 +4165,40 @@ void async_reply_check_cluster(async_command *acmd)
     if(hiarray_n(osdatas) == 0){
         log_stdout("No open slots.");
     }else{
+        log_stdout("");
         for(i = 0; i < hiarray_n(osdatas); i ++){
             osdata = hiarray_get(osdatas, i);
-            log_stdout("%u slot opened", osdata->slot_num);
+            if((*osdata)->source){
+                for(k = 0; k < hiarray_n((*osdata)->source); k++){
+                    elem_node = hiarray_get((*osdata)->source, k);
+                    log_stdout("node[%s] migrating %5u slot", 
+                        (*elem_node)->addr, (*osdata)->slot_num);
+                }
+            }
+            if((*osdata)->target){
+                for(k = 0; k < hiarray_n((*osdata)->target); k++){
+                    elem_node = hiarray_get((*osdata)->target, k);
+                    log_stdout("node[%s] importing %5u slot", 
+                        (*elem_node)->addr, (*osdata)->slot_num);
+                }
+            }
         }
     }
-    */
+    
     log_stdout("");
 
 done:
 
     if(nodes_infos != NULL){
         dictRelease(nodes_infos);
+    }
+
+    if(osdatas){
+        while(hiarray_n(osdatas)){           
+            osdata = hiarray_pop(osdatas);
+            open_slot_data_destroy(*osdata);   
+        }
+        hiarray_destroy(osdatas);
     }
 }
 

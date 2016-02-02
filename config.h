@@ -180,7 +180,7 @@ void setproctitle(const char *fmt, ...);
 #define HAVE_ASSERT_PANIC
 #endif
 
-#if 0
+#if 1
 #define HAVE_ASSERT_LOG
 #endif
 
