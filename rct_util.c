@@ -1069,4 +1069,18 @@ size_string_to_integer_byte(char *size, int size_len)
     return num;
 }
 
+int str_is_integer(char *str, int len)
+{
+    if(str == NULL || len <= 0){
+        return RCT_ERROR;
+    }
+
+    while(--len >= 0){
+        if(*(str+len) < '0' || *(str+len) > '9'){
+            return 0;
+        }
+    }
+
+    return 1;
+}
 

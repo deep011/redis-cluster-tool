@@ -2071,8 +2071,6 @@ void async_command_reset(async_command *acmd)
                 freeReplyObject(reply);
             }
         }
-
-        hiarray_deinit(&acmd->results);
     }
 
     if(acmd->command != NULL){
@@ -2091,10 +2089,13 @@ void async_command_reset(async_command *acmd)
         acmd->parameters = NULL;
     }
 
-    acmd->callback = NULL;
+    if(acmd->callback != NULL){
+        acmd->callback = NULL;
+        acmd->nodes_count = 0;
+        acmd->finished_count = 0;
+    }
+
     acmd->role = RCT_REDIS_ROLE_NULL;
-    acmd->nodes_count = 0;
-    acmd->finished_count = 0;
     acmd->stop = 1;
 }
 
@@ -2211,7 +2212,7 @@ static int do_command_all_nodes_async(async_command *acmd)
     int ret;
     dictIterator *di = NULL;
     dictEntry *de;
-    listIter *it;
+    listIter *it = NULL;
     listNode *ln;
     dict *nodes;
     list *slaves;
@@ -2272,6 +2273,10 @@ error:
         dictReleaseIterator(di);
     }
 
+    if(it != NULL){
+        listReleaseIterator(it);
+    }
+
     return RCT_ERROR;
 }
 
@@ -2306,6 +2311,7 @@ int cluster_async_call(rctContext *ctx,
 
         ctx->acmd = acmd;
     }else{
+        acmd->callback = callback;
         async_command_reset(acmd);
     }
 
@@ -4202,6 +4208,119 @@ done:
     }
 }
 
+void async_reply_destroy_cluster(async_command *acmd)
+{
+    int ret;
+    list *slaves;
+    listIter *li = NULL;
+    listNode *ln;
+    dictIterator *di = NULL;
+    dictEntry *de;
+    dict *nodes;
+    rctContext *ctx = acmd->ctx;
+    struct cluster_node *master, *slave;
+    sds command = NULL;
+
+    if(acmd == NULL)
+    {
+        return;
+    }
+
+    async_reply_display(acmd);
+    
+    nodes = acmd->nodes;
+    if(nodes == NULL)
+    {
+        return;
+    }
+
+    command = sdsnew("CLUSTER FORGET ");
+
+    /* step 1: cluster forget all nodes */
+    di = dictGetIterator(nodes);
+    while((de = dictNext(di)) != NULL) {
+        master = dictGetEntryVal(de);
+
+        sdsrange(command, 0, 14);
+        
+        command = sdscatsds(command, master->name);
+        
+        cluster_async_call(ctx, command, NULL, 
+            ctx->redis_role, NULL);
+        
+        slaves = master->slaves;
+        if(slaves == NULL)
+        {
+            continue;
+        }
+        
+        li = listGetIterator(slaves, AL_START_HEAD);
+        while((ln = listNext(li)) != NULL)
+        {
+            slave = listNodeValue(ln);
+            
+            sdsrange(command, 0, 14);
+            command = sdscatsds(command, slave->name);
+            cluster_async_call(ctx, command, NULL, 
+                ctx->redis_role, NULL);
+        }
+
+        listReleaseIterator(li);
+   
+    }
+    dictReleaseIterator(di);
+    di = NULL;
+
+    sleep(1);
+
+    /* step 2: delete slaves for masters by manual failover */
+    cluster_async_call(ctx, "CLUSTER FAILOVER TAKEOVER", NULL, 
+        ctx->redis_role, NULL);
+
+    /* step 3: forget master for slaves */
+    di = dictGetIterator(nodes);
+    while((de = dictNext(di)) != NULL) {
+        master = dictGetEntryVal(de);
+
+        sdsrange(command, 0, 14);
+        command = sdscatsds(command, master->name);
+        
+        cluster_async_call(ctx, command, NULL, 
+            ctx->redis_role, NULL);   
+    }
+    dictReleaseIterator(di);
+    di = NULL;
+
+    sdsfree(command);
+
+    /* step 4: delete slots for original slaves after manual failover */
+    cluster_async_call(ctx, "CLUSTER FLUSHSLOTS", NULL, 
+        ctx->redis_role, NULL);
+
+    /* step 5: flushall the nodes */
+    cluster_async_call(ctx, "FLUSHALL", NULL, 
+        ctx->redis_role, NULL);
+
+    log_stdout("Cluster destroy finished.");
+    log_stdout("");
+    
+    return;
+
+error:
+
+    if(di != NULL){
+        dictReleaseIterator(di);
+    }
+
+    if(li != NULL){
+        listReleaseIterator(li);
+    }
+
+    if(command != NULL){
+        sdsfree(command);
+    }
+}
+
 redisReply *redis_reply_clone(redisReply *r)
 {
     int j;
@@ -4271,6 +4390,154 @@ enomem:
     }
 
     return NULL;
+}
+
+int redis_instance_init(redis_instance *node, const char *addr, int role)
+{
+    sds *ip_port = NULL;
+    int ip_port_count = 0;
+
+    if(node == NULL || addr == NULL){
+        return RCT_ERROR;
+    }
+
+    node->addr = NULL;
+    node->host = NULL;
+    node->port = 0;
+    node->con = NULL;
+    node->role = RCT_REDIS_ROLE_NULL;
+    node->slaves = NULL;
+
+    node->addr = sdsnew(addr);
+    
+    ip_port = sdssplitlen(addr, strlen(addr), ":", 1, &ip_port_count);
+    if(ip_port == NULL || ip_port_count != 2 || 
+        sdslen(ip_port[0]) <= 0 || sdslen(ip_port[1]) <= 0)
+    {
+        log_stdout("Redis address %s is error.", addr);
+        goto error;
+    }
+
+    node->host = ip_port[0];
+    ip_port[0] = NULL;
+    node->port = rct_atoi(ip_port[1]);
+
+    sdsfreesplitres(ip_port, ip_port_count);
+    ip_port = NULL;
+
+    if(role == RCT_REDIS_ROLE_MASTER){
+        node->role = RCT_REDIS_ROLE_MASTER;
+    }else if(role == RCT_REDIS_ROLE_SLAVE){
+        node->role = RCT_REDIS_ROLE_SLAVE;
+    }else{
+        log_stdout("Redis role error.");
+        goto error;
+    }
+
+    node->slaves = listCreate();
+    if(node->slaves == NULL){
+        log_stdout("Out of memory");
+        goto error;
+    }
+    
+    return RCT_OK;
+
+error:
+    
+    if(ip_port != NULL)
+    {
+        sdsfreesplitres(ip_port, ip_port_count);
+    }
+
+    redis_instance_deinit(node);
+    
+    return RCT_ERROR;
+}
+
+redis_instance *redis_instance_create(const char *addr, int role)
+{
+    int ret;
+    redis_instance *node;
+
+    node = rct_alloc(sizeof(*node));
+    if(node == NULL){
+        return NULL;
+    }
+
+    ret = redis_instance_init(node, addr, role);
+    if(ret != RCT_OK){
+        redis_instance_destroy(node);
+        return NULL;
+    }
+
+    return node;
+}
+
+void redis_instance_deinit(redis_instance *node)
+{
+    listIter *it;
+    listNode *ln;
+    redis_instance *slave;
+    
+    if(node == NULL){
+        return;
+    }
+
+    if(node->addr){
+        sdsfree(node->addr);
+    }
+
+    if(node->host){
+        sdsfree(node->host);
+    }
+
+    if(node->con){
+        redisFree(node->con);
+    }
+
+    if(node->slaves){
+        it = listGetIterator(node->slaves, AL_START_HEAD);
+        while((ln = listNext(it)) != NULL){
+            slave = listNodeValue(ln);
+            redis_instance_destroy(slave);
+        }
+        
+        listReleaseIterator(it);
+        
+        listRelease(node->slaves);
+    }
+}
+
+void redis_instance_destroy(redis_instance *node)
+{
+    if(node == NULL){
+        return;
+    }
+    
+    redis_instance_deinit(node);
+
+    rct_free(node);
+}
+
+redisContext *cxt_get_by_redis_instance(redis_instance *node)
+{
+    if(node == NULL){
+        return NULL;
+    }
+
+    if(node->con){
+        if(node->con->err){
+            redisReconnect(node->con);
+        }
+
+        return node->con;
+    }
+
+    if(node->host == NULL || !rct_valid_port(node->port)){
+        return NULL;
+    }
+
+    return redisConnect(node->host, node->port);
 }
 
 static void *event_run(void *args)
@@ -5421,6 +5688,8 @@ int core_core(rctContext *ctx)
     }
 
     args_num = hiarray_n(&ctx->args);
+    if(command->min_arg_count < 0) command->min_arg_count = 0;
+    if(command->max_arg_count < 0) command->max_arg_count = 2147483647;
     if(args_num < command->min_arg_count || args_num > command->max_arg_count)
     {
         if(command->max_arg_count == 0)

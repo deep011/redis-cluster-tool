@@ -5,6 +5,10 @@
 struct RCTCommand rctCommandTable[] = {
     {RCT_CMD_CLUSTER_STATE, "Show the cluster state.", 
         cluster_state, -1, 0, 0, 0},
+    /*{RCT_CMD_CLUSTER_CREATE, "Create a cluster.", 
+        cluster_create, -1, 3, -1, 0},*/
+    {RCT_CMD_CLUSTER_DESTROY, "Destroy the cluster.", 
+        cluster_destroy, -1, 0, 0, 1},
     {RCT_CMD_CLUSTER_CHECK, "Check the cluster.", 
         cluster_check, -1, 0, 0, 0},
     {RCT_CMD_CLUSTER_USED_MEMORY, "Show the cluster used memory.", 
@@ -43,6 +47,7 @@ void cluster_state(rctContext *ctx , int type)
     
     if(hiarray_n(&ctx->args) != 0){
         log_error("Error: there can not have args for command %s", ctx->cmd);
+        return;
     }
 
     str = hiarray_push(&ctx->args);
@@ -50,6 +55,180 @@ void cluster_state(rctContext *ctx , int type)
     
     cluster_async_call(ctx, "cluster info", NULL, 
         ctx->redis_role, async_reply_info_display_check);
+}
+
+void cluster_create(rctContext *ctx , int type)
+{   
+    int ret;
+    uint32_t i, k;
+    sds *str;
+    int replicas;
+    redisContext *con;
+    struct hiarray nodes;
+    redis_instance *master, *slave, *node;
+    int master_count;
+    sds *master_slaves = NULL, *slaves_str = NULL;
+    int master_slaves_count, slaves_str_count;
+    redisReply *reply = NULL;
+    listIter *it = NULL;
+    listNode *ln;
+    
+    if(hiarray_n(&ctx->args) < 3){
+        log_error("Error: there must have at least three args for command %s", ctx->cmd);
+        return;
+    }
+
+    replicas = 0;
+
+    str = hiarray_get(&ctx->args, 0);
+    if(strcmp(*str, "--replicas") == 0){
+        str = hiarray_get(&ctx->args, 1);
+        if(str_is_integer(*str, sdslen(*str))){
+            replicas = rct_atoi(str);
+        }else{
+            log_error("Error: there must have an integer behind --replicas in the command %s", ctx->cmd);
+            return;
+        }
+    }
+
+    master_count = hiarray_n(&ctx->args);
+
+    ret = hiarray_init(&nodes, master_count, sizeof(redis_instance));
+    if(ret != RCT_OK){
+        log_stdout("Out of memory");
+        goto error;
+    }
+
+    for(i = 0; i < master_count; i ++){
+        str = hiarray_get(&ctx->args, i);
+        master_slaves = sdssplitlen(*str, sdslen(*str), "[", 1, &master_slaves_count);
+        if(master_slaves == NULL || (master_slaves_count != 1 && 
+            master_slaves_count != 2)){
+            log_stdout("The address is error.");
+            goto error;
+        }
+        
+        master = hiarray_push(&nodes);
+        ret = redis_instance_init(master, master_slaves[0], RCT_REDIS_ROLE_MASTER);
+        if(ret != RCT_OK){
+            log_stdout("Init redis master instance error.");
+            goto error;
+        }
+
+        if(master_slaves_count > 1){
+            sdsrange(master_slaves[1], 0, -2);
+            slaves_str = sdssplitlen(master_slaves[1], sdslen(master_slaves[1]), 
+                "|", 1, &slaves_str_count);
+            if(slaves_str == NULL || slaves_str_count <= 0){
+                log_stdout("Slaves address %s is error.", master_slaves[1]);
+                goto error;
+            }
+
+            for(k = 0; k < slaves_str_count; k ++){
+                slave = redis_instance_create(slaves_str[k], RCT_REDIS_ROLE_SLAVE);
+                if(slave == NULL){
+                    log_stdout("Init redis slave instance error.");
+                    goto error;
+                }
+
+                listAddNodeTail(master->slaves, slave);
+            }
+
+            sdsfreesplitres(slaves_str, slaves_str_count);
+            slaves_str = NULL;
+        }
+
+        sdsfreesplitres(master_slaves, master_slaves_count);
+        master_slaves = NULL;
+    }
+
+    RCT_ASSERT(master_count == hiarray_n(&nodes));
+
+    node = hiarray_get(&nodes, 0);
+    log_stdout("node[%s]", node->addr);
+
+    for(i = 1; i < hiarray_n(&nodes); i++){
+        master = hiarray_get(&nodes, i);
+        log_stdout("master[%s]", master->addr);
+        con = cxt_get_by_redis_instance(master);
+        if(con == NULL || con->err){
+            log_stdout("Connect to %s failed: %s", 
+                con==NULL?"NULL":con->errstr);
+            goto error;
+        }
+        
+        reply = redisCommand(con, "cluster meet %s %d", node->host, node->port);
+        if(reply == NULL || reply->type != REDIS_REPLY_STATUS || 
+            strcmp(reply->str, "OK") != 0){
+            log_stdout("Command \"cluster meet\" reply error.");
+            goto error;
+        }
+
+        freeReplyObject(reply);
+        reply = NULL;
+
+        if(master->slaves){
+            it = listGetIterator(master->slaves, AL_START_HEAD);
+            while((ln = listNext(it)) != NULL){
+                slave = listNodeValue(ln);
+                con = cxt_get_by_redis_instance(slave);
+                if(con == NULL || con->err){
+                    log_stdout("Connect to %s failed: %s", 
+                        con==NULL?"NULL":con->errstr);
+                    goto error;
+                }
+                
+                reply = redisCommand(con, "cluster meet %s %d", node->host, node->port);
+                if(reply == NULL || reply->type != REDIS_REPLY_STATUS || 
+                    strcmp(reply->str, "OK") != 0){
+                    log_stdout("Command \"cluster meet\" reply error.");
+                    goto error;
+                }
+
+                freeReplyObject(reply);
+                reply = NULL;
+            }
+            
+            listReleaseIterator(it);
+            it = NULL;
+        }
+    }
+    
+    cluster_async_call(ctx, "cluster nodes", NULL, 
+        ctx->redis_role, async_reply_check_cluster);
+
+    nodes.nelem = 0;
+    hiarray_deinit(&nodes);
+    
+    return;
+    
+error:
+
+    if(master_slaves != NULL){
+        sdsfreesplitres(master_slaves, master_slaves_count);
+    }
+
+    if(slaves_str != NULL){
+        sdsfreesplitres(slaves_str, slaves_str_count);
+    }
+
+    if(reply != NULL){
+        freeReplyObject(reply);
+    }
+
+    if(it){
+        listReleaseIterator(it);
+    }
+
+    nodes.nelem = 0;
+    hiarray_deinit(&nodes);
+}
+
+void cluster_destroy(rctContext *ctx , int type)
+{
+    ctx->redis_role = RCT_REDIS_ROLE_ALL;
+    cluster_async_call(ctx, "ping", NULL, 
+        ctx->redis_role, async_reply_destroy_cluster);
 }
 
 void cluster_check(rctContext *ctx , int type)

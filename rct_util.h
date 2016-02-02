@@ -300,5 +300,7 @@ _rct_strrchr(uint8_t *p, uint8_t *start, uint8_t c)
 
 uint64_t size_string_to_integer_byte(char *size, int size_len);
 
+int str_is_integer(char *str, int len);
+
 #endif
 

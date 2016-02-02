@@ -175,6 +175,22 @@ void async_reply_info_keynum(async_command *acmd);
 void async_reply_info_display(async_command *acmd);
 void async_reply_info_display_check(async_command *acmd);
 void async_reply_check_cluster(async_command *acmd);
+void async_reply_destroy_cluster(async_command *acmd);
+
+typedef struct redis_instance{
+    sds addr;
+    sds host;
+    int port;
+    redisContext *con;
+    uint8_t role;
+    list *slaves;
+}redis_instance;
+
+int redis_instance_init(redis_instance *node, const char *addr, int role);
+void redis_instance_deinit(redis_instance *node);
+redis_instance *redis_instance_create(const char *addr, int role);
+void redis_instance_destroy(redis_instance *node);
+redisContext *cxt_get_by_redis_instance(redis_instance *node);
 
 #endif
 
