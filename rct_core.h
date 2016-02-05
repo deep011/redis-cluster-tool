@@ -135,7 +135,7 @@ void cluster_del_keys(rctContext *ctx, int type);
 struct async_command;
 struct aeEventLoop;
 
-typedef void (async_callback_reply)(struct async_command*);
+typedef int (async_callback_reply)(struct async_command*);
 
 typedef struct async_command{
     rctContext *ctx;
@@ -149,7 +149,6 @@ typedef struct async_command{
     int finished_count; /* finished node count in one step */
     struct hiarray results;  //type: cluster_node
     async_callback_reply *callback;
-    int stop;   /* loop stop ? */
     int step;   /* the command step count */
     list *black_nodes;
 }async_command;
@@ -165,17 +164,18 @@ void async_command_deinit(async_command *acmd);
 int cluster_async_call(rctContext *ctx, char *command, struct hiarray *parameters, int role, async_callback_reply *callback);
 redisReply *redis_reply_clone(redisReply *r);
 
-void async_reply_status(async_command *acmd);
-void async_reply_string(async_command *acmd);
-void async_reply_display(async_command *acmd);
-void async_reply_display_check(async_command *acmd);
-void async_reply_maxmemory(async_command *acmd);
-void async_reply_info_memory(async_command *acmd);
-void async_reply_info_keynum(async_command *acmd);
-void async_reply_info_display(async_command *acmd);
-void async_reply_info_display_check(async_command *acmd);
-void async_reply_check_cluster(async_command *acmd);
-void async_reply_destroy_cluster(async_command *acmd);
+int async_reply_status(async_command *acmd);
+int async_reply_string(async_command *acmd);
+int async_reply_display(async_command *acmd);
+int async_reply_display_check(async_command *acmd);
+int async_reply_maxmemory(async_command *acmd);
+int async_reply_info_memory(async_command *acmd);
+int async_reply_info_keynum(async_command *acmd);
+int async_reply_info_display(async_command *acmd);
+int async_reply_info_display_check(async_command *acmd);
+int async_reply_check_cluster(async_command *acmd);
+int async_reply_destroy_cluster(async_command *acmd);
+int async_reply_cluster_create(async_command *acmd);
 
 typedef struct redis_instance{
     sds addr;

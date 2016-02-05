@@ -5,6 +5,9 @@
 #include<hiutil.h>
 #include<time.h>
 
+#define RCT_AE_CONTINUE     0
+#define RCT_AE_STOP         1
+
 unsigned int dictSdsHash(const void *key) {
     return dictGenHashFunction((unsigned char*)key, sdslen((char*)key));
 }
@@ -1943,7 +1946,6 @@ int async_command_init(async_command *acmd, rctContext *ctx, char *addrs, int fl
     acmd->nodes_count = 0;
     acmd->finished_count = 0;
     hiarray_null(&acmd->results);
-    acmd->stop = 0;
     acmd->step = 0;
     acmd->black_nodes = NULL;
 
@@ -1970,8 +1972,6 @@ int async_command_init(async_command *acmd, rctContext *ctx, char *addrs, int fl
         log_error("Init result array failed.");
         goto error;
     }
-
-    acmd->stop = 1;
 
     acmd->black_nodes = listCreate();
     if(acmd->black_nodes == NULL){
@@ -2048,7 +2048,6 @@ void async_command_deinit(async_command *acmd)
     acmd->role = RCT_REDIS_ROLE_NULL;
     acmd->nodes_count = 0;
     acmd->finished_count = 0;
-    acmd->stop = 0;
     acmd->step = 0;
 }
 
@@ -2066,9 +2065,9 @@ void async_command_reset(async_command *acmd)
             node = hiarray_pop(&acmd->results);
             
             reply = (*node)->data;
-            (*node)->data = NULL;
             if(reply != NULL){
                 freeReplyObject(reply);
+                (*node)->data = NULL;
             }
         }
     }
@@ -2096,10 +2095,10 @@ void async_command_reset(async_command *acmd)
     }
 
     acmd->role = RCT_REDIS_ROLE_NULL;
-    acmd->stop = 1;
 }
 
 static void async_callback_func(redisAsyncContext *c, void *r, void *privdata) {
+    int ret;
     redisReply *reply = r;
     async_callback_data *data = privdata;
     async_command *acmd = data->acmd;
@@ -2141,14 +2140,15 @@ static void async_callback_func(redisAsyncContext *c, void *r, void *privdata) {
 done:
 
     if(acmd->finished_count >= acmd->nodes_count){
+        acmd->step ++;
+        
         if(acmd->callback != NULL){
-            acmd->callback(acmd);
-        }
-
-        if(acmd->stop){
-            aeStop(acmd->loop);
+            ret = acmd->callback(acmd);
+            if(ret == RCT_AE_STOP){
+                aeStop(acmd->loop);
+            }
         }else{
-            acmd->step ++;
+            aeStop(acmd->loop);
         }
     }
 
@@ -2331,18 +2331,22 @@ int cluster_async_call(rctContext *ctx,
     }
 
     if(acmd->nodes_count == 0){
-        if(acmd->callback != NULL){
-            acmd->callback(acmd);
-        }
+        acmd->step ++;
 
-        if(acmd->stop){
-            if(acmd->step == 0){
+        if(acmd->callback != NULL){
+            ret = acmd->callback(acmd);
+
+            if(acmd->step == 1){
                 return RCT_OK;
-            }else{
+            }else if(ret == RCT_AE_STOP){
                 aeStop(acmd->loop);
             }
         }else{
-            acmd->step ++;
+            if(acmd->step == 1){
+                return RCT_OK;
+            }
+            
+            aeStop(acmd->loop);
         }
     }
 
@@ -2369,7 +2373,7 @@ redis_cluster_addr_cmp(const void *t1, const void *t2)
     return sdscmp((*s1)->addr, (*s2)->addr);
 }
 
-void async_reply_status(async_command *acmd)
+int async_reply_status(async_command *acmd)
 {
     int i, all_is_ok;
     redisReply *reply;
@@ -2440,9 +2444,11 @@ void async_reply_status(async_command *acmd)
     }else{
         log_stdout("Some nodes \"%s\" are ERROR", acmd->command);
     }
+
+    return RCT_AE_STOP;
 }
 
-void async_reply_string(async_command *acmd)
+int async_reply_string(async_command *acmd)
 {
     int i, all_is_ok, all_is_same;
     redisReply *reply;
@@ -2554,6 +2560,8 @@ void async_reply_string(async_command *acmd)
     }else{
         log_stdout("Some nodes are error, others \"%s\" are DIFFERENT", acmd->command);
     }
+
+    return RCT_AE_STOP;
 }
 
 static sds redis_reply_to_string(redisReply *reply)
@@ -2606,7 +2614,7 @@ static sds redis_reply_to_string(redisReply *reply)
     return str;
 }
 
-void async_reply_display(async_command *acmd)
+int async_reply_display(async_command *acmd)
 {
     int i;
     redisReply *reply;
@@ -2682,9 +2690,11 @@ void async_reply_display(async_command *acmd)
     if(str != NULL){
         sdsfree(str);
     }
+
+    return RCT_AE_STOP;
 }
 
-void async_reply_display_check(async_command *acmd)
+int async_reply_display_check(async_command *acmd)
 {
     int i, all_is_ok, all_is_same;
     redisReply *reply;
@@ -2809,9 +2819,11 @@ void async_reply_display_check(async_command *acmd)
     if(str != NULL){
         sdsfree(str);
     }
+
+    return RCT_AE_STOP;
 }
 
-void async_reply_maxmemory(async_command *acmd)
+int async_reply_maxmemory(async_command *acmd)
 {
     int i, all_is_ok, all_is_same;
     char *pre_str, *str;
@@ -2944,6 +2956,8 @@ void async_reply_maxmemory(async_command *acmd)
 
     log_stdout("Cluster total maxmemory: %lld (%lld MB)",
         total_memory, total_memory/(1024*1024));
+
+    return RCT_AE_STOP;
 }
 
 static sds redis_reply_info_get_value(char *str, int len, sds key)
@@ -2998,7 +3012,7 @@ static sds redis_reply_info_get_value(char *str, int len, sds key)
     return value;
 }
 
-void async_reply_info_memory(async_command *acmd)
+int async_reply_info_memory(async_command *acmd)
 {
     int i, all_is_ok;
     sds key, value;
@@ -3013,7 +3027,7 @@ void async_reply_info_memory(async_command *acmd)
 
     if(hiarray_n(&ctx->args) != 1){
         log_error("Error: args for % is not 1", acmd->command);
-        return;
+        return RCT_AE_STOP;
     }
 
     key = *(sds*)hiarray_get(&ctx->args, 0);
@@ -3170,9 +3184,11 @@ void async_reply_info_memory(async_command *acmd)
         log_stdout("Some nodes are error, other nodes total \"%s\" : %lld (%lld MB)", 
             key, total_memory, total_memory/(1024*1024));
     }
+
+    return RCT_AE_STOP;
 }
 
-void async_reply_info_keynum(async_command *acmd)
+int async_reply_info_keynum(async_command *acmd)
 {
     int i, all_is_ok;
     sds key, value;
@@ -3188,7 +3204,7 @@ void async_reply_info_keynum(async_command *acmd)
 
     if(hiarray_n(&ctx->args) != 1){
         log_error("Error: args for % is not 1", acmd->command);
-        return;
+        return RCT_AE_STOP;
     }
 
     key = *(sds*)hiarray_get(&ctx->args, 0);
@@ -3387,9 +3403,11 @@ void async_reply_info_keynum(async_command *acmd)
         log_stdout("Some nodes are error, other nodes has %lld keys", 
             total_keynum);
     }
+
+    return RCT_AE_STOP;
 }
 
-void async_reply_info_display(async_command *acmd)
+int async_reply_info_display(async_command *acmd)
 {
     int i;
     redisReply *reply;
@@ -3405,7 +3423,7 @@ void async_reply_info_display(async_command *acmd)
 
     if(hiarray_n(&ctx->args) != 1){
         log_error("Error: args for % is not 1", acmd->command);
-        return;
+        return RCT_AE_STOP;
     }
 
     key = *(sds*)hiarray_get(&ctx->args, 0);
@@ -3497,9 +3515,11 @@ void async_reply_info_display(async_command *acmd)
     if(value != NULL){
         sdsfree(value);
     }
+
+    return RCT_AE_STOP;
 }
 
-void async_reply_info_display_check(async_command *acmd)
+int async_reply_info_display_check(async_command *acmd)
 {
     int i, all_is_ok, all_is_same;
     redisReply *reply;
@@ -3513,7 +3533,7 @@ void async_reply_info_display_check(async_command *acmd)
 
     if(hiarray_n(&ctx->args) != 1){
         log_error("Error: args for % is not 1", acmd->command);
-        return;
+        return RCT_AE_STOP;
     }
 
     key = *(sds*)hiarray_get(&ctx->args, 0);
@@ -3646,6 +3666,8 @@ void async_reply_info_display_check(async_command *acmd)
     if(pre_value != NULL){
         sdsfree(pre_value);
     }
+
+    return RCT_AE_STOP;
 }
 
 static sds get_cluster_config_signature(dict *nodes)
@@ -3746,7 +3768,7 @@ error:
     return NULL;
 }
 
-static int check_cluster_config_signature(dict *nodes_infos)
+static int check_cluster_config_signature(dict *nodes_infos, int show)
 {
     dict *nodes;
     sds csign_pre = NULL, csign = NULL;
@@ -3780,16 +3802,26 @@ static int check_cluster_config_signature(dict *nodes_infos)
             csign_pre = csign;
             csign = NULL;
         }else{
-            log_stdout("node[%s] and node[%s] cluster conf are different.", 
-                addr_pre, dictGetEntryKey(de_nodes));
-            log_stdout("node[%s]: %s", addr_pre, csign_pre);
-            log_stdout("node[%s]: %s", dictGetEntryKey(de_nodes), csign);
+            if(show){
+                log_stdout("node[%s] and node[%s] cluster conf are different.", 
+                    addr_pre, dictGetEntryKey(de_nodes));
+                log_stdout("node[%s]: %s", addr_pre, csign_pre);
+                log_stdout("node[%s]: %s", dictGetEntryKey(de_nodes), csign);
+            }
             goto error;
         }
     }
 
     dictReleaseIterator(di_nodes);
     di_nodes = NULL;
+
+    if(csign_pre != NULL){
+        sdsfree(csign_pre);
+    }
+
+    if(csign != NULL){
+        sdsfree(csign);
+    }
 
     return RCT_OK;
 
@@ -4069,31 +4101,22 @@ dictType nodesConfDictType = {
     dictDestructor              /* val destructor */
 };
 
-void async_reply_check_cluster(async_command *acmd)
+static dict *get_nodes_info_with_async_reply(struct hiarray *results)
 {
-    int ret;
-    uint32_t i, k;
-    redisReply *reply;
-    char *str;
-    list *slaves;
-    listIter *li = NULL;
+    uint32_t i;
+    listIter *li;
     listNode *ln;
-    struct cluster_node **elem_node, *node, *slave;
-    struct hiarray *results = &acmd->results;
-    rctContext *ctx = acmd->ctx;
-    dict *nodes, *nodes_not_null;
-    copen_slot **oslot;
+    redisReply *reply;
     dict *nodes_infos;
-    struct hiarray *osdatas = NULL;
-    open_slot_data **osdata;
-
+    dict *nodes;
+    list *slaves;
+    struct cluster_node **elem_node, *node, *slave;
+    
     nodes_infos = dictCreate(&nodesConfDictType, NULL);
     if(nodes_infos == NULL){
         log_error("Out of memory");
-        goto done;
+        return NULL;
     }
-    
-    log_stdout("Checking cluster ...");
 
     for(i = 0; i < hiarray_n(results); i ++){
         elem_node = hiarray_get(results, i);
@@ -4116,45 +4139,110 @@ void async_reply_check_cluster(async_command *acmd)
         }
 
         dictAdd(nodes_infos, (*elem_node)->addr, nodes);
-        nodes_not_null = nodes;
         
-        if(ctx->redis_role == RCT_REDIS_ROLE_ALL || 
-            ctx->redis_role == RCT_REDIS_ROLE_SLAVE){
-            slaves = (*elem_node)->slaves;
-            if((*elem_node)->role == REDIS_ROLE_MASTER &&
-                slaves != NULL){
-                li = listGetIterator(slaves, AL_START_HEAD);
-                while(ln = listNext(li)){
-                    slave = listNodeValue(ln);
-                    reply = slave->data;
+        slaves = (*elem_node)->slaves;
+        if((*elem_node)->role == REDIS_ROLE_MASTER &&
+            slaves != NULL){
+            li = listGetIterator(slaves, AL_START_HEAD);
+            while(ln = listNext(li)){
+                slave = listNodeValue(ln);
+                reply = slave->data;
 
-                    if(reply == NULL || reply->type != REDIS_REPLY_STRING){
-                        log_warn("Warn: slave[%s] is error: %s.", 
-                            slave->addr, reply==NULL?"NULL":reply->str);
-                        continue;
-                    }
-
-                    nodes = parse_cluster_nodes(NULL, reply->str, reply->len, 
-                        HIRCLUSTER_FLAG_ADD_SLAVE|HIRCLUSTER_FLAG_ADD_OPENSLOT);
-                    if(nodes == NULL){
-                        log_warn("Warn: slave[%s] \"cluster nodes\" reply parse error", 
-                            (*elem_node)->addr);
-                        continue;
-                    }
-
-                    dictAdd(nodes_infos, slave->addr, nodes);
+                if(reply == NULL || reply->type != REDIS_REPLY_STRING){
+                    log_warn("Warn: slave[%s] is error: %s.", 
+                        slave->addr, reply==NULL?"NULL":reply->str);
+                    continue;
                 }
 
-                listReleaseIterator(li);
-                li = NULL;
+                nodes = parse_cluster_nodes(NULL, reply->str, reply->len, 
+                    HIRCLUSTER_FLAG_ADD_SLAVE|HIRCLUSTER_FLAG_ADD_OPENSLOT);
+                if(nodes == NULL){
+                    log_warn("Warn: slave[%s] \"cluster nodes\" reply parse error", 
+                        (*elem_node)->addr);
+                    continue;
+                }
+
+                dictAdd(nodes_infos, slave->addr, nodes);
             }
+
+            listReleaseIterator(li);
         }
     }
 
-    ret = check_cluster_config_signature(nodes_infos);
+    return nodes_infos;
+}
+
+int async_reply_cluster_create(async_command *acmd)
+{
+    int ret, stop;
+    struct hiarray *results = &acmd->results;
+    rctContext *ctx = acmd->ctx;
+    dict *nodes_infos;
+
+    stop = 1;
+    
+    nodes_infos = get_nodes_info_with_async_reply(results);
+    if(nodes_infos == NULL){
+        log_stdout("Get nodes config info error.");
+        return RCT_AE_STOP;
+    }
+
+    ret = check_cluster_config_signature(nodes_infos, 0);
+    if(ret != RCT_OK){
+        log_stdout_without_newline(".");
+        sleep(1);
+        cluster_async_call(ctx, "cluster nodes", NULL, 
+            ctx->redis_role, async_reply_cluster_create);
+        stop = 0;
+        goto done;
+    }
+
+    log_stdout("\nAll nodes joined!");
+
+    
+
+done:
+
+    if(nodes_infos != NULL){
+        dictRelease(nodes_infos);
+    }
+
+    if(!stop) return RCT_AE_CONTINUE;
+    
+    return RCT_AE_STOP;
+}
+
+int async_reply_check_cluster(async_command *acmd)
+{
+    int ret;
+    uint32_t i, k;
+    struct cluster_node **elem_node;
+    struct hiarray *results = &acmd->results;
+    dict *nodes;
+    copen_slot **oslot;
+    dict *nodes_infos;
+    dictIterator *di_nodes;
+    dictEntry *de_nodes;
+    struct hiarray *osdatas = NULL;
+    open_slot_data **osdata;
+
+    log_stdout("Checking cluster ...");
+
+    nodes_infos = get_nodes_info_with_async_reply(results);
+    if(nodes_infos == NULL){
+        log_stdout("Get nodes config info error.");
+        return RCT_AE_STOP;
+    }
+
+    ret = check_cluster_config_signature(nodes_infos, 1);
     if(ret == RCT_OK){
         log_stdout("All nodes agree about slots configuration.");
-        ret = check_cluster_slot_coverage(nodes_not_null);
+
+        di_nodes = dictGetIterator(nodes_infos);
+        de_nodes = dictNext(di_nodes);
+        nodes = dictGetEntryVal(de_nodes);
+        dictReleaseIterator(di_nodes);
+        ret = check_cluster_slot_coverage(nodes);
         if(ret == RCT_OK){
             log_stdout("All 16384 slots covered.");
         }else{
@@ -4206,9 +4294,11 @@ done:
         }
         hiarray_destroy(osdatas);
     }
+
+    return RCT_AE_STOP;
 }
 
-void async_reply_destroy_cluster(async_command *acmd)
+int async_reply_destroy_cluster(async_command *acmd)
 {
     int ret;
     list *slaves;
@@ -4223,7 +4313,7 @@ void async_reply_destroy_cluster(async_command *acmd)
 
     if(acmd == NULL)
     {
-        return;
+        return RCT_AE_STOP;
     }
 
     async_reply_display(acmd);
@@ -4231,7 +4321,7 @@ void async_reply_destroy_cluster(async_command *acmd)
     nodes = acmd->nodes;
     if(nodes == NULL)
     {
-        return;
+        return RCT_AE_STOP;
     }
 
     command = sdsnew("CLUSTER FORGET ");
@@ -4304,7 +4394,7 @@ void async_reply_destroy_cluster(async_command *acmd)
     log_stdout("Cluster destroy finished.");
     log_stdout("");
     
-    return;
+    return RCT_AE_CONTINUE;
 
 error:
 
@@ -4319,6 +4409,8 @@ error:
     if(command != NULL){
         sdsfree(command);
     }
+
+    return RCT_AE_STOP;
 }
 
 redisReply *redis_reply_clone(redisReply *r)
