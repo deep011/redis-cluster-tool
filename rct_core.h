@@ -117,6 +117,7 @@ typedef struct rctContext {
     uint64_t buffer_size;
     struct hiarray args; /* sds[] */
     struct async_command *acmd;
+    void *private_data;
 }rctContext;
 
 rctContext *create_context(struct instance *nci);
@@ -184,6 +185,8 @@ typedef struct redis_instance{
     redisContext *con;
     uint8_t role;
     list *slaves;
+    int slots_start;
+    int slots_count;
 }redis_instance;
 
 int redis_instance_init(redis_instance *node, const char *addr, int role);

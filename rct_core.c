@@ -133,6 +133,7 @@ create_context(struct instance *nci)
     rct_ctx->thread_count = nci->thread_count;
 
     rct_ctx->acmd = NULL;
+    rct_ctx->private_data = NULL;
     
     return rct_ctx;
 }
@@ -4175,9 +4176,19 @@ static dict *get_nodes_info_with_async_reply(struct hiarray *results)
 int async_reply_cluster_create(async_command *acmd)
 {
     int ret, stop;
+    int i;
     struct hiarray *results = &acmd->results;
     rctContext *ctx = acmd->ctx;
     dict *nodes_infos;
+    struct hiarray *rinsts;
+    redis_instance *master, *slave;
+    redisContext *con;
+    redisReply *reply = NULL;
+    listIter *it = NULL;
+    listNode *ln;
+    sds master_name;
+    dictEntry *den;
+    cluster_node *node;
 
     stop = 1;
     
@@ -4191,20 +4202,75 @@ int async_reply_cluster_create(async_command *acmd)
     if(ret != RCT_OK){
         log_stdout_without_newline(".");
         sleep(1);
+        stop = 0;
         cluster_async_call(ctx, "cluster nodes", NULL, 
             ctx->redis_role, async_reply_cluster_create);
-        stop = 0;
         goto done;
     }
 
     log_stdout("\nAll nodes joined!");
 
-    
+    async_command_reset(acmd);
+    cluster_update_route(ctx->acmd->acc->cc);
+    acmd->nodes = acmd->acc->cc->nodes;
+
+    rinsts = ctx->private_data;
+
+    for(i = 0; i < hiarray_n(rinsts); i++){
+        master = hiarray_get(rinsts, i);
+
+        den = dictFind(acmd->nodes, master->addr);
+        if(den == NULL){
+            log_stdout("Error: node %s can not find in the cluster.",
+                master->addr);
+            goto done;
+        }
+        
+        node = dictGetEntryVal(den);
+        master_name = node->name;
+        
+        if(master->slaves){            
+            it = listGetIterator(master->slaves, AL_START_HEAD);
+            while((ln = listNext(it)) != NULL){
+                slave = listNodeValue(ln);
+                con = cxt_get_by_redis_instance(slave);
+                if(con == NULL || con->err){
+                    log_stdout("Connect to %s failed: %s", 
+                        con==NULL?"NULL":con->errstr);
+                    goto done;
+                }
+                
+                reply = redisCommand(con, "cluster replicate %s", master_name);
+                if(reply == NULL || reply->type != REDIS_REPLY_STATUS || 
+                    strcmp(reply->str, "OK") != 0){
+                    log_stdout("Command \"cluster replicate\" reply error: %s.",
+                        reply==NULL?"NULL":(reply->type == REDIS_REPLY_ERROR?reply->str:"other"));
+                    goto done;
+                }
+
+                freeReplyObject(reply);
+                reply = NULL;
+            }
+            
+            listReleaseIterator(it);
+            it = NULL;
+        }
+    }
+
+    log_stdout("Cluster created success!");
 
 done:
 
     if(nodes_infos != NULL){
         dictRelease(nodes_infos);
+    }
+
+    if(reply != NULL){
+        freeReplyObject(reply);
+    }
+
+    if(it != NULL){
+        listReleaseIterator(it);
     }
 
     if(!stop) return RCT_AE_CONTINUE;
@@ -4484,6 +4550,12 @@ enomem:
     return NULL;
 }
 
+static void redis_instance_list_free(void *ptr)
+{
+    redis_instance *node = ptr;
+    redis_instance_destroy(node);
+}
+
 int redis_instance_init(redis_instance *node, const char *addr, int role)
 {
     sds *ip_port = NULL;
@@ -4499,6 +4571,8 @@ int redis_instance_init(redis_instance *node, const char *addr, int role)
     node->con = NULL;
     node->role = RCT_REDIS_ROLE_NULL;
     node->slaves = NULL;
+    node->slots_start = 0;
+    node->slots_count = 0;
 
     node->addr = sdsnew(addr);
     
@@ -4531,6 +4605,8 @@ int redis_instance_init(redis_instance *node, const char *addr, int role)
         log_stdout("Out of memory");
         goto error;
     }
+
+    node->slaves->free = redis_instance_list_free;
     
     return RCT_OK;
 
@@ -4598,6 +4674,9 @@ void redis_instance_deinit(redis_instance *node)
         
         listRelease(node->slaves);
     }
+   
+    node->slots_start = 0;
+    node->slots_count = 0;
 }
 
 void redis_instance_destroy(redis_instance *node)

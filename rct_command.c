@@ -5,8 +5,8 @@
 struct RCTCommand rctCommandTable[] = {
     {RCT_CMD_CLUSTER_STATE, "Show the cluster state.", 
         cluster_state, -1, 0, 0, 0},
-    /*{RCT_CMD_CLUSTER_CREATE, "Create a cluster.", 
-        cluster_create, -1, 3, -1, 0},*/
+    {RCT_CMD_CLUSTER_CREATE, "Create a cluster.", 
+        cluster_create, -1, 3, -1, 0},
     {RCT_CMD_CLUSTER_DESTROY, "Destroy the cluster.", 
         cluster_destroy, -1, 0, 0, 1},
     {RCT_CMD_CLUSTER_CHECK, "Check the cluster.", 
@@ -60,18 +60,18 @@ void cluster_state(rctContext *ctx , int type)
 void cluster_create(rctContext *ctx , int type)
 {   
     int ret;
-    uint32_t i, k;
+    uint32_t i, j, k;
     sds *str;
     int replicas;
-    redisContext *con;
-    struct hiarray nodes;
-    redis_instance *master, *slave, *node;
+    redisContext *con_m, *con_s;
+    struct hiarray *nodes = NULL;
+    redis_instance *master, *slave, *node, *node_slave;
     int master_count;
-    int slot_begin, slot_step;
+    int slot_begin, slot_step, remainder;
     sds *master_slaves = NULL, *slaves_str = NULL;
     int master_slaves_count, slaves_str_count;
     redisReply *reply = NULL;
-    listIter *it = NULL;
+    listIter *it = NULL, *it_node = NULL;
     listNode *ln;
     sds command_addslot = NULL;
     
@@ -97,9 +97,10 @@ void cluster_create(rctContext *ctx , int type)
 
     master_count = hiarray_n(&ctx->args);
     slot_step = REDIS_CLUSTER_SLOTS/master_count;
+    remainder = REDIS_CLUSTER_SLOTS%master_count;
 
-    ret = hiarray_init(&nodes, master_count, sizeof(redis_instance));
-    if(ret != RCT_OK){
+    nodes = hiarray_create(master_count, sizeof(redis_instance));
+    if(nodes == NULL){
         log_stdout("Out of memory");
         goto error;
     }
@@ -113,12 +114,17 @@ void cluster_create(rctContext *ctx , int type)
             goto error;
         }
         
-        master = hiarray_push(&nodes);
+        master = hiarray_push(nodes);
         ret = redis_instance_init(master, master_slaves[0], RCT_REDIS_ROLE_MASTER);
         if(ret != RCT_OK){
             log_stdout("Init redis master instance error.");
             goto error;
         }
+
+        master->slots_start = slot_begin;
+        master->slots_count = slot_step + (remainder>0?1:0);
+        slot_begin += master->slots_count;
+        if(remainder > 0)   remainder--;
 
         if(master_slaves_count > 1){
             sdsrange(master_slaves[1], 0, -2);
@@ -147,59 +153,64 @@ void cluster_create(rctContext *ctx , int type)
         master_slaves = NULL;
     }
 
-    RCT_ASSERT(master_count == hiarray_n(&nodes));
+    RCT_ASSERT(master_count == hiarray_n(nodes));
 
     command_addslot = sdsnew("cluster addslots");
 
-    node = hiarray_get(&nodes, 0);
-    log_stdout("node[%s]", node->addr);
-    con = cxt_get_by_redis_instance(node);
-    if(con == NULL || con->err){
-        log_stdout("Connect to %s failed: %s", 
-            con==NULL?"NULL":con->errstr);
-        goto error;
-    }
-    
-    for(k = slot_begin; k < slot_begin+slot_step; k ++){
-        command_addslot = sdscatfmt(command_addslot, " %i", k);
-    }
-    
-    reply = redisCommand(con, command_addslot);
-    if(reply == NULL || reply->type != REDIS_REPLY_STATUS || 
-        strcmp(reply->str, "OK") != 0){
-        log_stdout("Command \"cluster addslot\" reply error: %s.", 
-            reply==NULL?"NULL":(reply->type == REDIS_REPLY_ERROR?reply->str:"other"));
-        goto error;
-    }
-
-    for(i = 1; i < hiarray_n(&nodes); i++){
-        master = hiarray_get(&nodes, i);
-        log_stdout("master[%s]", master->addr);
-        con = cxt_get_by_redis_instance(master);
-        if(con == NULL || con->err){
+    for(i = 0; i < hiarray_n(nodes); i++){
+        master = hiarray_get(nodes, i);
+        con_m = cxt_get_by_redis_instance(master);
+        if(con_m == NULL || con_m->err){
             log_stdout("Connect to %s failed: %s", 
-                con==NULL?"NULL":con->errstr);
+                con_m==NULL?"NULL":con_m->errstr);
             goto error;
         }
-        
-        reply = redisCommand(con, "cluster meet %s %d", node->host, node->port);
-        if(reply == NULL || reply->type != REDIS_REPLY_STATUS || 
-            strcmp(reply->str, "OK") != 0){
-            log_stdout("Command \"cluster meet\" reply error.");
-            goto error;
+
+        for(j = 0; j < hiarray_n(nodes); j++){
+            node = hiarray_get(nodes, j);
+            if(node != master){
+                reply = redisCommand(con_m, "cluster meet %s %d", node->host, node->port);
+                if(reply == NULL || reply->type != REDIS_REPLY_STATUS || 
+                    strcmp(reply->str, "OK") != 0){
+                    log_stdout("Command \"cluster meet\" reply error: %s.",
+                        reply==NULL?"NULL":(reply->type == REDIS_REPLY_ERROR?reply->str:"other"));
+                    goto error;
+                }
+
+                freeReplyObject(reply);
+                reply = NULL;
+            }
+
+            if(node->slaves){            
+                it_node = listGetIterator(node->slaves, AL_START_HEAD);
+                while((ln = listNext(it_node)) != NULL){
+                    node_slave = listNodeValue(ln);
+                    if(node_slave != master){
+                        reply = redisCommand(con_m, "cluster meet %s %d", 
+                            node_slave->host, node_slave->port);
+                        if(reply == NULL || reply->type != REDIS_REPLY_STATUS || 
+                            strcmp(reply->str, "OK") != 0){
+                            log_stdout("Command \"cluster meet\" reply error: %s.",
+                                reply==NULL?"NULL":(reply->type == REDIS_REPLY_ERROR?reply->str:"other"));
+                            goto error;
+                        }
+
+                        freeReplyObject(reply);
+                        reply = NULL;
+                    }
+                }
+                
+                listReleaseIterator(it_node);
+                it_node = NULL;
+            }
         }
 
         sdsrange(command_addslot, 0, 15);
-        for(k = slot_begin; k < slot_begin+slot_step; k ++){
+        for(k = master->slots_start; k < master->slots_start+master->slots_count; k ++){
             command_addslot = sdscatfmt(command_addslot, " %i", k);
         }
 
-        slot_begin = slot_begin+slot_step;
-        if(i == (master_count - 1)){
-            slot_step = REDIS_CLUSTER_SLOTS - slot_begin;
-        }
-
-        reply = redisCommand(con, command_addslot);
+        reply = redisCommand(con_m, command_addslot);
         if(reply == NULL || reply->type != REDIS_REPLY_STATUS || 
             strcmp(reply->str, "OK") != 0){
             log_stdout("Command \"cluster addslot\" reply error: %s.", 
@@ -210,26 +221,57 @@ void cluster_create(rctContext *ctx , int type)
         freeReplyObject(reply);
         reply = NULL;
 
-        if(master->slaves){
+        if(master->slaves){            
             it = listGetIterator(master->slaves, AL_START_HEAD);
             while((ln = listNext(it)) != NULL){
                 slave = listNodeValue(ln);
-                con = cxt_get_by_redis_instance(slave);
-                if(con == NULL || con->err){
+                con_s = cxt_get_by_redis_instance(slave);
+                if(con_s == NULL || con_s->err){
                     log_stdout("Connect to %s failed: %s", 
-                        con==NULL?"NULL":con->errstr);
-                    goto error;
-                }
-                
-                reply = redisCommand(con, "cluster meet %s %d", node->host, node->port);
-                if(reply == NULL || reply->type != REDIS_REPLY_STATUS || 
-                    strcmp(reply->str, "OK") != 0){
-                    log_stdout("Command \"cluster meet\" reply error.");
+                        con_s==NULL?"NULL":con_s->errstr);
                     goto error;
                 }
 
-                freeReplyObject(reply);
-                reply = NULL;
+                
+                for(j = 0; j < hiarray_n(nodes); j++){
+                    node = hiarray_get(nodes, j);
+                    if(node != slave){
+                        reply = redisCommand(con_s, "cluster meet %s %d", node->host, node->port);
+                        if(reply == NULL || reply->type != REDIS_REPLY_STATUS || 
+                            strcmp(reply->str, "OK") != 0){
+                            log_stdout("Command \"cluster meet\" reply error: %s.",
+                                reply==NULL?"NULL":(reply->type == REDIS_REPLY_ERROR?reply->str:"other"));
+                            goto error;
+                        }
+        
+                        freeReplyObject(reply);
+                        reply = NULL;
+                    }
+        
+                    if(node->slaves){            
+                        it_node = listGetIterator(node->slaves, AL_START_HEAD);
+                        while((ln = listNext(it_node)) != NULL){
+                            node_slave = listNodeValue(ln);
+                            if(node_slave != master){
+                                reply = redisCommand(con_s, "cluster meet %s %d", 
+                                    node_slave->host, node_slave->port);
+                                if(reply == NULL || reply->type != REDIS_REPLY_STATUS || 
+                                    strcmp(reply->str, "OK") != 0){
+                                    log_stdout("Command \"cluster meet\" reply error: %s.",
+                                        reply==NULL?"NULL":(reply->type == REDIS_REPLY_ERROR?reply->str:"other"));
+                                    goto error;
+                                }
+        
+                                freeReplyObject(reply);
+                                reply = NULL;
+                            }
+                        }
+                        
+                        listReleaseIterator(it_node);
+                        it_node = NULL;
+                    }
+                }
+                
             }
             
             listReleaseIterator(it);
@@ -237,15 +279,14 @@ void cluster_create(rctContext *ctx , int type)
         }
     }
 
-
-    log_stdout_without_newline("Waiting for the nodes to join..");
+    log_stdout_without_newline("Waiting for the nodes to join.");
     sleep(1);
-    log_stdout_without_newline(".");
+
+    ctx->private_data = nodes;
+    sdsfree(command_addslot);
+    
     cluster_async_call(ctx, "cluster nodes", NULL, 
         ctx->redis_role, async_reply_cluster_create);
-    
-    nodes.nelem = 0;
-    hiarray_deinit(&nodes);
     
     return;
     
@@ -267,8 +308,23 @@ error:
         listReleaseIterator(it);
     }
 
-    nodes.nelem = 0;
-    hiarray_deinit(&nodes);
+    if(it_node){
+        listReleaseIterator(it_node);
+    }
+
+    if(nodes != NULL){
+        while(hiarray_n(nodes) > 0){
+            master = hiarray_pop(nodes);
+            redis_instance_deinit(master);
+        }
+        
+        hiarray_destroy(nodes);
+    }
+
+    if(command_addslot != NULL){
+        sdsfree(command_addslot);
+    }
+
 }
 
 void cluster_destroy(rctContext *ctx , int type)
