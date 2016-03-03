@@ -109,7 +109,7 @@ struct instance {
 typedef struct rctContext {
     redisClusterContext *cc;
     dict *commands; /* Command table */
-    char *address;
+    sds address;
     char *cmd;
     uint8_t redis_role;
     uint8_t simple;
@@ -177,6 +177,7 @@ int async_reply_info_display_check(async_command *acmd);
 int async_reply_check_cluster(async_command *acmd);
 int async_reply_destroy_cluster(async_command *acmd);
 int async_reply_cluster_create(async_command *acmd);
+int async_reply_delete_all_slaves(async_command *acmd);
 
 typedef struct redis_instance{
     sds addr;

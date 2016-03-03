@@ -4,6 +4,7 @@
 #define RCT_CMD_CLUSTER_STATE			"cluster_state"
 #define RCT_CMD_CLUSTER_CREATE		    "cluster_create"
 #define RCT_CMD_CLUSTER_DESTROY		    "cluster_destroy"
+#define RCT_CMD_CLUSTER_DEL_ALL_SLAVES	"cluster_delete_all_slaves"
 #define RCT_CMD_CLUSTER_CHECK		    "cluster_check"
 #define RCT_CMD_CLUSTER_KEYS_NUM		"cluster_keys_num"
 #define RCT_CMD_CLUSTER_USED_MEMORY		"cluster_used_memory"
@@ -24,6 +25,8 @@
 
 
 #define CMD_FLAG_NEED_CONFIRM 			(1<<0)
+#define CMD_FLAG_NOT_NEED_ADDRESS		(1<<1)
+#define CMD_FLAG_NEED_SYNCHRONOUS		(1<<2)
 
 struct rctContext;
 
@@ -70,5 +73,6 @@ void cluster_config_rewrite(struct rctContext *ctx , int type);
 void cluster_check(struct rctContext *ctx , int type);
 void cluster_create(struct rctContext *ctx , int type);
 void cluster_destroy(struct rctContext *ctx , int type);
+void cluster_delete_all_slaves(struct rctContext *ctx , int type);
 
 #endif

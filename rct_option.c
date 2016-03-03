@@ -6,7 +6,7 @@
 
 #define RCT_LOG_PATH         	NULL
 
-#define RCT_ADDR             	"127.0.0.1:6379"
+#define RCT_ADDR             	NULL
 #define RCT_INTERVAL         	1000
 
 #define RCT_PID_FILE         	NULL

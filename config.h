@@ -172,7 +172,7 @@ void setproctitle(const char *fmt, ...);
 #endif
 #endif
 
-#if 1
+#if 0
 #define HAVE_DEBUG_LOG
 #endif
 
@@ -180,7 +180,7 @@ void setproctitle(const char *fmt, ...);
 #define HAVE_ASSERT_PANIC
 #endif
 
-#if 1
+#if 0
 #define HAVE_ASSERT_LOG
 #endif
 

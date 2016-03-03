@@ -4,11 +4,13 @@
 
 struct RCTCommand rctCommandTable[] = {
     {RCT_CMD_CLUSTER_STATE, "Show the cluster state.", 
-        cluster_state, -1, 0, 0, 0},
+        cluster_state, -1, 0, 0, 4},
     {RCT_CMD_CLUSTER_CREATE, "Create a cluster.", 
-        cluster_create, -1, 3, -1, 0},
+        cluster_create, -1, 3, -1, 2},
     {RCT_CMD_CLUSTER_DESTROY, "Destroy the cluster.", 
         cluster_destroy, -1, 0, 0, 1},
+    {RCT_CMD_CLUSTER_DEL_ALL_SLAVES, "Delete all the slaves in the cluster.", 
+        cluster_delete_all_slaves, -1, 0, 0, 1},
     {RCT_CMD_CLUSTER_CHECK, "Check the cluster.", 
         cluster_check, -1, 0, 0, 0},
     {RCT_CMD_CLUSTER_USED_MEMORY, "Show the cluster used memory.", 
@@ -20,13 +22,13 @@ struct RCTCommand rctCommandTable[] = {
     {RCT_CMD_CLUSTER_CLUSTER_INFO, "Show the cluster state in the \"cluster info\" command.", 
         cluster_cluster_state, -1, 1, 1, 0},
     {RCT_CMD_SLOTS_STATE, "Show the slots state.", 
-        slots_state, -1, 0, 0, 0},
+        slots_state, -1, 0, 0, 4},
     {RCT_CMD_NODE_SLOT_NUM, "Show the node hold slots number.", 
-        show_nodes_hold_slot_num, -1, 0, 0, 0},
+        show_nodes_hold_slot_num, -1, 0, 0, 4},
     {RCT_CMD_NEW_NODES_NAME, "Show the new nodes name that not covered slots.", 
-        show_new_nodes_name, -1, 0, 0, 0},
+        show_new_nodes_name, -1, 0, 0, 4},
     {RCT_CMD_CLUSTER_REBALANCE, "Show the cluster how to rebalance.", 
-        cluster_rebalance, -1, 0, 0, 0},
+        cluster_rebalance, -1, 0, 0, 4},
     {RCT_CMD_FLUSHALL, "Flush all the cluster.", 
         cluster_flushall, -1, 0, 0, 1},
     {RCT_CMD_CLUSTER_CONFIG_GET, "Get config from every node in the cluster and check consistency.", 
@@ -36,9 +38,9 @@ struct RCTCommand rctCommandTable[] = {
     {RCT_CMD_CLUSTER_CONFIG_REWRITE, "Rewrite every node config to echo node for the cluster.", 
         cluster_config_rewrite, -1, 0, 0, 1},
     {RCT_CMD_NODE_LIST, "List the nodes", 
-        show_nodes_list, -1, 0, 0, 0},
+        show_nodes_list, -1, 0, 0, 4},
     {RCT_CMD_DEL_KEYS, "Delete keys in the cluster. The keys must match a given glob-style pattern.(This command not block the redis)", 
-        cluster_del_keys, -1, 1, 1, 1}
+        cluster_del_keys, -1, 1, 1, 5}
 };
 
 void cluster_state(rctContext *ctx , int type)
@@ -284,6 +286,13 @@ void cluster_create(rctContext *ctx , int type)
 
     ctx->private_data = nodes;
     sdsfree(command_addslot);
+
+    if (ctx->address) {
+        sdsfree(ctx->address);
+        ctx->address = NULL;
+    }
+
+    ctx->address = sdsnew(master->addr);
     
     cluster_async_call(ctx, "cluster nodes", NULL, 
         ctx->redis_role, async_reply_cluster_create);
@@ -332,6 +341,13 @@ void cluster_destroy(rctContext *ctx , int type)
     ctx->redis_role = RCT_REDIS_ROLE_ALL;
     cluster_async_call(ctx, "ping", NULL, 
         ctx->redis_role, async_reply_destroy_cluster);
+}
+
+void cluster_delete_all_slaves(rctContext *ctx , int type)
+{
+    ctx->redis_role = RCT_REDIS_ROLE_ALL;
+    cluster_async_call(ctx, "ping", NULL, 
+        ctx->redis_role, async_reply_delete_all_slaves);
 }
 
 void cluster_check(rctContext *ctx , int type)

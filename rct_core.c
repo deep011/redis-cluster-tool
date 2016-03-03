@@ -63,6 +63,7 @@ create_context(struct instance *nci)
     }
 
     rct_ctx->cc = NULL;
+    rct_ctx->address = NULL;
 
     commands = dictCreate(&commandTableDictType,NULL);
     if(commands == NULL)
@@ -74,7 +75,8 @@ create_context(struct instance *nci)
     populateCommandTable(commands);
     rct_ctx->commands = commands;
 
-    rct_ctx->address = nci->addr;
+    if (nci->addr)
+        rct_ctx->address = sdsnew(nci->addr);
 
     cmd_parts = sdssplitargs(nci->command, &cmd_parts_count);
     if(cmd_parts == NULL || cmd_parts_count <= 0)
@@ -140,8 +142,7 @@ create_context(struct instance *nci)
 
 void destroy_context(rctContext *rct_ctx)
 {
-    while(hiarray_n(&rct_ctx->args) > 0)
-    {
+    while (hiarray_n(&rct_ctx->args) > 0) {
         sds *arg = hiarray_pop(&rct_ctx->args);
         sdsfree(*arg);
     }
@@ -151,9 +152,13 @@ void destroy_context(rctContext *rct_ctx)
     sdsfree(rct_ctx->cmd);
     dictRelease(rct_ctx->commands);
     
-    if(rct_ctx->acmd != NULL){
+    if (rct_ctx->acmd != NULL){
         async_command_deinit(rct_ctx->acmd);
         rct_free(rct_ctx->acmd);
+    }
+
+    if (rct_ctx->address) {
+        sdsfree(rct_ctx->address);
     }
     
     rct_free(rct_ctx);
@@ -4398,7 +4403,7 @@ int async_reply_destroy_cluster(async_command *acmd)
         master = dictGetEntryVal(de);
 
         sdsrange(command, 0, 14);
-        
+
         command = sdscatsds(command, master->name);
         
         cluster_async_call(ctx, command, NULL, 
@@ -4457,7 +4462,101 @@ int async_reply_destroy_cluster(async_command *acmd)
     cluster_async_call(ctx, "FLUSHALL", NULL, 
         ctx->redis_role, NULL);
 
+    /* step 6: cluster reset */
+    cluster_async_call(ctx, "CLUSTER RESET HARD", NULL, 
+        ctx->redis_role, NULL);
+
     log_stdout("Cluster destroy finished.");
+    log_stdout("");
+    
+    return RCT_AE_CONTINUE;
+
+error:
+
+    if(di != NULL){
+        dictReleaseIterator(di);
+    }
+
+    if(li != NULL){
+        listReleaseIterator(li);
+    }
+
+    if(command != NULL){
+        sdsfree(command);
+    }
+
+    return RCT_AE_STOP;
+}
+
+int async_reply_delete_all_slaves(async_command *acmd)
+{
+    int ret;
+    list *slaves;
+    listIter *li = NULL;
+    listNode *ln;
+    dictIterator *di = NULL;
+    dictEntry *de;
+    dict *nodes;
+    rctContext *ctx = acmd->ctx;
+    struct cluster_node *master, *slave;
+    sds command = NULL;
+
+    if(acmd == NULL)
+    {
+        return RCT_AE_STOP;
+    }
+
+    async_reply_display(acmd);
+    
+    nodes = acmd->nodes;
+    if(nodes == NULL)
+    {
+        return RCT_AE_STOP;
+    }
+
+    command = sdsnew("CLUSTER FORGET ");
+
+    /* step 1: cluster forget all slaves */
+    di = dictGetIterator(nodes);
+    while((de = dictNext(di)) != NULL) {
+        master = dictGetEntryVal(de);
+        
+        slaves = master->slaves;
+        if(slaves == NULL)
+        {
+            continue;
+        }
+        
+        li = listGetIterator(slaves, AL_START_HEAD);
+        while((ln = listNext(li)) != NULL)
+        {
+            slave = listNodeValue(ln);
+            
+            sdsrange(command, 0, 14);
+            command = sdscatsds(command, slave->name);
+            cluster_async_call(ctx, command, NULL, 
+                ctx->redis_role, NULL);
+        }
+
+        listReleaseIterator(li);
+   
+    }
+    dictReleaseIterator(di);
+    di = NULL;
+    sdsfree(command);
+    command = NULL;
+
+    sleep(1);
+
+    /* step 2: flushall the slaves */
+    cluster_async_call(ctx, "FLUSHALL", NULL, 
+        RCT_REDIS_ROLE_SLAVE, NULL);
+
+    /* step 3: cluster reset the slaves */
+    cluster_async_call(ctx, "CLUSTER RESET HARD", NULL, 
+        RCT_REDIS_ROLE_SLAVE, NULL);
+
+    log_stdout("All slaves are deleted.");
     log_stdout("");
     
     return RCT_AE_CONTINUE;
@@ -4653,26 +4752,22 @@ void redis_instance_deinit(redis_instance *node)
 
     if(node->addr){
         sdsfree(node->addr);
+        node->addr = NULL;
     }
 
     if(node->host){
         sdsfree(node->host);
+        node->host = NULL;
     }
 
     if(node->con){
         redisFree(node->con);
+        node->con = NULL;
     }
 
     if(node->slaves){
-        it = listGetIterator(node->slaves, AL_START_HEAD);
-        while((ln = listNext(it)) != NULL){
-            slave = listNodeValue(ln);
-            redis_instance_destroy(slave);
-        }
-        
-        listReleaseIterator(it);
-        
         listRelease(node->slaves);
+        node->slaves = NULL;
     }
    
     node->slots_start = 0;
@@ -5785,7 +5880,6 @@ done:
 int core_core(rctContext *ctx)
 {
     redisClusterContext *cc = NULL;
-    char * addr;
     char * type;
     int start, end;
     int command_type;
@@ -5794,29 +5888,6 @@ int core_core(rctContext *ctx)
     sds arg;
     int args_num;
     int flags;
-    
-    addr = ctx->address;
-    
-    struct timeval timeout = { 3, 5000 };//3.005s
-
-    if(ctx->redis_role == RCT_REDIS_ROLE_ALL 
-        || ctx->redis_role == RCT_REDIS_ROLE_SLAVE)
-    {
-        flags = HIRCLUSTER_FLAG_ADD_SLAVE;
-    }
-
-    cc = redisClusterConnect(addr, flags);
-    //cc = redisClusterConnectAllWithTimeout(addr, timeout, flags);
-    if(cc == NULL || cc->err)
-    {
-        log_stdout("connect error : %s", cc == NULL ? "NULL" : cc->errstr);
-        goto done;
-    }
-
-    ctx->cc = cc;
-
-    redisClusterSetMaxRedirect(cc, 1);
-
 
     di = dictFind(ctx->commands, ctx->cmd);
     if(di == NULL)
@@ -5856,6 +5927,35 @@ int core_core(rctContext *ctx)
             scanf("%s", &confirm_input);
             confirm_retry ++;
         }
+    }
+
+    if (ctx->address == NULL && 
+        !(command->flag & CMD_FLAG_NOT_NEED_ADDRESS)) {
+        log_stdout("Error: address is need.");
+        goto done;
+    }
+
+    if (command->flag & CMD_FLAG_NEED_SYNCHRONOUS) {
+    
+        struct timeval timeout = { 3, 5000 };//3.005s
+
+        if(ctx->redis_role == RCT_REDIS_ROLE_ALL 
+            || ctx->redis_role == RCT_REDIS_ROLE_SLAVE)
+        {
+            flags = HIRCLUSTER_FLAG_ADD_SLAVE;
+        }
+
+        cc = redisClusterConnect(ctx->address, flags);
+        //cc = redisClusterConnectAllWithTimeout(addr, timeout, flags);
+        if(cc == NULL || cc->err)
+        {
+            log_stdout("connect error : %s", cc == NULL ? "NULL" : cc->errstr);
+            goto done;
+        }
+
+        ctx->cc = cc;
+
+        redisClusterSetMaxRedirect(cc, 1);
     }
 
     args_num = hiarray_n(&ctx->args);
