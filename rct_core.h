@@ -72,6 +72,7 @@ typedef int err_t;     /* error type */
 #include <hiarray.h>
 #include <sds.h>
 #include <dict.c>
+#include <adlist.h>
 
 #include "rct_util.h"
 #include "rct_option.h"
