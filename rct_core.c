@@ -1965,7 +1965,7 @@ int async_command_init(async_command *acmd, rctContext *ctx, char *addrs, int fl
 
     acmd->nodes = acmd->acc->cc->nodes;
 
-    acmd->loop = aeCreateEventLoop(dictSize(acmd->nodes) + 100);
+    acmd->loop = aeCreateEventLoop(1000);
     if(acmd->loop == NULL){
         log_error("Create ae event loop failed.");
         goto error;
