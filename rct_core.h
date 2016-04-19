@@ -152,7 +152,7 @@ typedef struct async_command{
     struct hiarray results;  //type: cluster_node
     async_callback_reply *callback;
     int step;   /* the command step count */
-    list *black_nodes;
+    hilist *black_nodes;
 }async_command;
 
 typedef struct async_callback_data{
@@ -186,7 +186,7 @@ typedef struct redis_instance{
     int port;
     redisContext *con;
     uint8_t role;
-    list *slaves;
+    hilist *slaves;
     int slots_start;
     int slots_count;
 }redis_instance;

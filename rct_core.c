@@ -249,7 +249,7 @@ void slots_state(rctContext *ctx, int type)
 
 int node_hold_slot_num(struct cluster_node *node, redis_node *r_node, int isprint)
 {
-    list *slots;
+    hilist *slots;
     listIter *iter;
     listNode *list_node;
     struct cluster_slot *slot;
@@ -469,7 +469,7 @@ void show_new_nodes_name(rctContext *ctx, int type)
 void show_nodes_list(rctContext *ctx, int type)
 {
     dict *nodes = ctx->cc->nodes;
-    list *slaves;
+    hilist *slaves;
     dictIterator *di;
     dictEntry *de;
     listIter *it;
@@ -1213,7 +1213,7 @@ void nodes_get_state(rctContext *ctx, int type)
     dict *nodes;
     listIter *it;
     listNode *ln;
-    list *slaves;
+    hilist *slaves;
     cluster_node *master, *slave;
     redisContext *c = NULL;
     redisReply *reply = NULL;
@@ -1601,7 +1601,7 @@ void do_command_node_by_node(rctContext *ctx, int type)
     listIter *it;
     listNode *ln;
     dict *nodes;
-    list *slaves;
+    hilist *slaves;
     int nodes_count;
     struct cluster_node *master, *slave;
     redisContext *c = NULL;
@@ -2221,7 +2221,7 @@ static int do_command_all_nodes_async(async_command *acmd)
     listIter *it = NULL;
     listNode *ln;
     dict *nodes;
-    list *slaves;
+    hilist *slaves;
     struct cluster_node *master, *slave;
 
     if(acmd == NULL)
@@ -2383,7 +2383,7 @@ int async_reply_status(async_command *acmd)
 {
     int i, all_is_ok;
     redisReply *reply;
-    list *slaves;
+    hilist *slaves;
     listIter *li = NULL;
     listNode *ln;
     struct cluster_node **node, *slave;
@@ -2460,7 +2460,7 @@ int async_reply_string(async_command *acmd)
     redisReply *reply;
     char *previous_str;
     int previous_len;
-    list *slaves;
+    hilist *slaves;
     listIter *li = NULL;
     listNode *ln;
     struct cluster_node **node, *slave;
@@ -2625,7 +2625,7 @@ int async_reply_display(async_command *acmd)
     int i;
     redisReply *reply;
     sds str;
-    list *slaves;
+    hilist *slaves;
     listIter *li = NULL;
     listNode *ln;
     struct cluster_node **node, *slave;
@@ -2705,7 +2705,7 @@ int async_reply_display_check(async_command *acmd)
     int i, all_is_ok, all_is_same;
     redisReply *reply;
     sds pre_str, str;
-    list *slaves;
+    hilist *slaves;
     listIter *li = NULL;
     listNode *ln;
     struct cluster_node **node, *slave;
@@ -2835,7 +2835,7 @@ int async_reply_maxmemory(async_command *acmd)
     char *pre_str, *str;
     redisReply *reply, *subreply;
     long long total_memory, memory;
-    list *slaves;
+    hilist *slaves;
     listIter *li = NULL;
     listNode *ln;
     struct cluster_node **node, *slave;
@@ -3024,7 +3024,7 @@ int async_reply_info_memory(async_command *acmd)
     sds key, value;
     redisReply *reply, *subreply;
     long long total_memory, memory;
-    list *slaves;
+    hilist *slaves;
     listIter *li = NULL;
     listNode *ln;
     struct cluster_node **node, *slave;
@@ -3201,7 +3201,7 @@ int async_reply_info_keynum(async_command *acmd)
     char *str_begin, *str_end;
     redisReply *reply, *subreply;
     long long total_keynum, keynum;
-    list *slaves;
+    hilist *slaves;
     listIter *li = NULL;
     listNode *ln;
     struct cluster_node **node, *slave;
@@ -3419,7 +3419,7 @@ int async_reply_info_display(async_command *acmd)
     redisReply *reply;
     char *str;
     int len;
-    list *slaves;
+    hilist *slaves;
     listIter *li = NULL;
     listNode *ln;
     struct cluster_node **node, *slave;
@@ -3529,7 +3529,7 @@ int async_reply_info_display_check(async_command *acmd)
 {
     int i, all_is_ok, all_is_same;
     redisReply *reply;
-    list *slaves;
+    hilist *slaves;
     listIter *li = NULL;
     listNode *ln;
     struct cluster_node **node, *slave;
@@ -4115,7 +4115,7 @@ static dict *get_nodes_info_with_async_reply(struct hiarray *results)
     redisReply *reply;
     dict *nodes_infos;
     dict *nodes;
-    list *slaves;
+    hilist *slaves;
     struct cluster_node **elem_node, *node, *slave;
     
     nodes_infos = dictCreate(&nodesConfDictType, NULL);
@@ -4372,7 +4372,7 @@ done:
 int async_reply_destroy_cluster(async_command *acmd)
 {
     int ret;
-    list *slaves;
+    hilist *slaves;
     listIter *li = NULL;
     listNode *ln;
     dictIterator *di = NULL;
@@ -4491,7 +4491,7 @@ error:
 int async_reply_delete_all_slaves(async_command *acmd)
 {
     int ret;
-    list *slaves;
+    hilist *slaves;
     listIter *li = NULL;
     listNode *ln;
     dictIterator *di = NULL;
@@ -4837,7 +4837,7 @@ typedef struct del_keys_node{
 typedef struct scan_keys_data{
     pthread_t thread_id;
     aeEventLoop *loop;
-    list *nodes_data;   //type : del_keys_node
+    hilist *nodes_data;   //type : del_keys_node
     int nodes_count;    //this loop thread is responsible for 
     int finish_scan_nodes;
 }scan_keys_data;
@@ -5455,7 +5455,7 @@ error:
 
 void *scan_keys_job(void *args)
 {
-    list *nodes_data = args;  //type : del_keys_node
+    hilist *nodes_data = args;  //type : del_keys_node
     del_keys_node *node_data;
     del_keys_data *del_data;
     listNode *lnode, *lnode_next;
@@ -5499,7 +5499,7 @@ void *scan_keys_job(void *args)
 void *scan_keys_job_run(void *args)
 {
     scan_keys_data *scan_data = args;
-    list *nodes_data = scan_data->nodes_data;  //type : del_keys_node
+    hilist *nodes_data = scan_data->nodes_data;  //type : del_keys_node
     del_keys_node *node_data;
     rctContext *ctx;
     redisAsyncContext *ac;

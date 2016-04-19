@@ -2,7 +2,7 @@
 #define _RCT_LOCKLIST_H_
 
 typedef struct locklist{
-    list *l;
+    hilist *l;
     pthread_mutex_t lmutex;
 }locklist;
 
