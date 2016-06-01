@@ -159,18 +159,18 @@ void cluster_create(rctContext *ctx , int type)
 
     command_addslot = sdsnew("cluster addslots");
 
-    for(i = 0; i < hiarray_n(nodes); i++){
+    for (i = 0; i < hiarray_n(nodes); i++) {
         master = hiarray_get(nodes, i);
         con_m = cxt_get_by_redis_instance(master);
-        if(con_m == NULL || con_m->err){
+        if (con_m == NULL || con_m->err) {
             log_stdout("Connect to %s failed: %s", 
-                con_m==NULL?"NULL":con_m->errstr);
+                master->addr, con_m==NULL?"NULL":con_m->errstr);
             goto error;
         }
 
-        for(j = 0; j < hiarray_n(nodes); j++){
+        for (j = 0; j < hiarray_n(nodes); j++) {
             node = hiarray_get(nodes, j);
-            if(node != master){
+            if (node != master) {
                 reply = redisCommand(con_m, "cluster meet %s %d", node->host, node->port);
                 if(reply == NULL || reply->type != REDIS_REPLY_STATUS || 
                     strcmp(reply->str, "OK") != 0){
@@ -223,14 +223,14 @@ void cluster_create(rctContext *ctx , int type)
         freeReplyObject(reply);
         reply = NULL;
 
-        if(master->slaves){            
+        if (master->slaves) {            
             it = listGetIterator(master->slaves, AL_START_HEAD);
             while((ln = listNext(it)) != NULL){
                 slave = listNodeValue(ln);
                 con_s = cxt_get_by_redis_instance(slave);
                 if(con_s == NULL || con_s->err){
                     log_stdout("Connect to %s failed: %s", 
-                        con_s==NULL?"NULL":con_s->errstr);
+                        slave->addr, con_s==NULL?"NULL":con_s->errstr);
                     goto error;
                 }
 

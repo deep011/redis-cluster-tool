@@ -4241,7 +4241,7 @@ int async_reply_cluster_create(async_command *acmd)
                 con = cxt_get_by_redis_instance(slave);
                 if(con == NULL || con->err){
                     log_stdout("Connect to %s failed: %s", 
-                        con==NULL?"NULL":con->errstr);
+                        slave->addr, con==NULL?"NULL":con->errstr);
                     goto done;
                 }
                 
