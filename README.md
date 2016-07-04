@@ -4,14 +4,21 @@
 
 ## Build
 
-redis-cluster-tool need hiredis-vip(https://github.com/vipshop/hiredis-vip), so you must install hiredis-vip first.
+redis-cluster-tool need hiredis-vip(https://github.com/vipshop/hiredis-vip), so you must install hiredis-vip first:
+
+    $ git clone https://github.com/vipshop/hiredis-vip.git
+    $ cd hiredis-vip
+    $ make
+    $ sudo make install
+    $ cd ..
 
 To build redis-cluster-tool:
 
-    $ export HIREDIS_VIP_INSTALL_DIR="your hiredis-vip install path"
-    $ export PREFIX="the path for redis-cluster-tool to install"
+    $ git clone https://github.com/deep011/redis-cluster-tool.git
+    $ cd redis-cluster-tool
     $ make
     $ sudo make install
+    $ ./redis-cluster-tool -h
 
 ## Package
 
