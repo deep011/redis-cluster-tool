@@ -473,7 +473,7 @@ rct_assert(const char *cond, const char *file, int line, int panic)
     }
 }
 
-int
+static int
 _vscnprintf(char *buf, size_t size, const char *fmt, va_list args)
 {
     int n;
@@ -501,7 +501,7 @@ _vscnprintf(char *buf, size_t size, const char *fmt, va_list args)
     return (int)(size - 1);
 }
 
-int
+static int
 _scnprintf(char *buf, size_t size, const char *fmt, ...)
 {
     va_list args;

@@ -19,6 +19,7 @@
 
 #define RCT_OPTION_BUFFER_DEFAULT		1024*1024
 
+#define RCT_AUTH		NULL
 
 static struct option long_options[] = {
     { "help",           no_argument,        NULL,   'h' },
@@ -36,10 +37,11 @@ static struct option long_options[] = {
     { "thread",        	required_argument,  NULL,   't' },
     { "buffer",        	required_argument,  NULL,   'b' },
     { "step",        	required_argument,  NULL,   'S' },
+    { "auth",           required_argument,  NULL,   'A' },
     { NULL,             0,                  NULL,    0  }
 };
 
-static char short_options[] = "hVdo:v:c:a:i:p:C:r:st:b:S:";
+static char short_options[] = "hVdo:v:c:a:i:p:C:r:st:b:S:A:";
 
 void
 rct_show_usage(void)
@@ -48,7 +50,7 @@ rct_show_usage(void)
         "Usage: redis-cluster-tool [-?hVds] [-v verbosity level] [-o output file]" CRLF
         "                  [-c conf file] [-a addr] [-i interval]" CRLF
         "                  [-p pid file] [-C command] [-r redis role]" CRLF
-        "                  [-t thread number] [-b buffer size]" CRLF
+        "                  [-t thread number] [-b buffer size] [-A auth]" CRLF
         "");
     log_stderr(
         "Options:" CRLF
@@ -67,6 +69,7 @@ rct_show_usage(void)
         "  -r, --role=S           : set the role of the nodes that command to execute on (default: %s, you can input: %s, %s or %s)" CRLF
         "  -t, --thread=N         : set how many threads to run the job(default: %d)" CRLF
         "  -b, --buffer=S         : set buffer size to run the job (default: %lld byte, unit:G/M/K)" CRLF
+        "  -A, --auth=S           : set redis cluster auth (default: %s)" CRLF
         "",
         RCT_LOG_DEFAULT, RCT_LOG_MIN, RCT_LOG_MAX,
         RCT_LOG_PATH != NULL ? RCT_LOG_PATH : "stderr",
@@ -80,7 +83,8 @@ rct_show_usage(void)
         RCT_OPTION_REDIS_ROLE_MASTER,
         RCT_OPTION_REDIS_ROLE_SLAVE,
         RCT_OPTION_THREAD_COUNT_DEFAULT,
-        RCT_OPTION_BUFFER_DEFAULT);
+        RCT_OPTION_BUFFER_DEFAULT,
+        RCT_AUTH);
 
 	rct_show_command_usage();
 }
@@ -195,7 +199,11 @@ rct_get_options(int argc, char **argv, struct instance *nci)
 		case 'C':
             nci->command = optarg;
             break;
-			
+
+        case 'A':
+            nci->auth = optarg;
+            break;
+
 		case 'r':
             nci->role = optarg;
 			if(strcmp(nci->role, RCT_OPTION_REDIS_ROLE_ALL) != 0
@@ -254,6 +262,7 @@ rct_get_options(int argc, char **argv, struct instance *nci)
 			case 'C':
 			case 'r':
 			case 'b':
+			case 'A':
                 log_stderr("redis-cluster-tool: option -%c requires a string", optopt);
                 break;
 

@@ -8,11 +8,11 @@
 #define RCT_AE_CONTINUE     0
 #define RCT_AE_STOP         1
 
-unsigned int dictSdsHash(const void *key) {
+static unsigned int dictSdsHash(const void *key) {
     return dictGenHashFunction((unsigned char*)key, sdslen((char*)key));
 }
 
-int dictSdsKeyCompare(void *privdata, const void *key1,
+static int dictSdsKeyCompare(void *privdata, const void *key1,
         const void *key2)
 {
     int l1,l2;
@@ -24,7 +24,7 @@ int dictSdsKeyCompare(void *privdata, const void *key1,
     return memcmp(key1, key2, l1) == 0;
 }
 
-void dictSdsDestructor(void *privdata, void *val)
+static void dictSdsDestructor(void *privdata, void *val)
 {
     DICT_NOTUSED(privdata);
 
@@ -64,6 +64,7 @@ create_context(struct instance *nci)
 
     rct_ctx->cc = NULL;
     rct_ctx->address = NULL;
+    rct_ctx->auth = NULL;
 
     commands = dictCreate(&commandTableDictType,NULL);
     if(commands == NULL)
@@ -77,6 +78,9 @@ create_context(struct instance *nci)
 
     if (nci->addr)
         rct_ctx->address = sdsnew(nci->addr);
+
+    if (nci->auth)
+        rct_ctx->auth = sdsnew(nci->auth);
 
     cmd_parts = sdssplitargs(nci->command, &cmd_parts_count);
     if(cmd_parts == NULL || cmd_parts_count <= 0)
@@ -1957,7 +1961,7 @@ int async_command_init(async_command *acmd, rctContext *ctx, char *addrs, int fl
 
     acmd->ctx = ctx;
     
-    acmd->acc = redisClusterAsyncConnect(addrs, HIRCLUSTER_FLAG_ADD_SLAVE);
+    acmd->acc = redisClusterAsyncConnect(addrs, ctx->auth, HIRCLUSTER_FLAG_ADD_SLAVE);
     if(acmd->acc == NULL){
         log_error("Connect to %s failed.", addrs);
         goto error;
@@ -2169,7 +2173,7 @@ static int do_command_one_node_async(async_command *acmd, struct cluster_node *n
     char **argv;
     size_t *argvlen;
     sds *str;
-        
+
     if(acmd == NULL || node == NULL){
         return RCT_ERROR;
     }
@@ -5945,7 +5949,10 @@ int core_core(rctContext *ctx)
             flags = HIRCLUSTER_FLAG_ADD_SLAVE;
         }
 
-        cc = redisClusterConnect(ctx->address, flags);
+        if(ctx->auth)
+            cc = redisClusterConnectWithAuth(ctx->address, ctx->auth, flags);
+        else
+            cc = redisClusterConnect(ctx->address, flags);
         //cc = redisClusterConnectAllWithTimeout(addr, timeout, flags);
         if(cc == NULL || cc->err)
         {
