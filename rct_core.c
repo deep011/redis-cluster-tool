@@ -648,7 +648,7 @@ void nodes_keys_num(redisClusterContext *cc)
 
         if(listLength(node->slots))
         {
-            c = ctx_get_by_node(node, NULL, cc->flags);
+            c = ctx_get_by_node(cc, node);
             if(c == NULL)
             {   
                 log_stdout("node[%s] get connect failed", node->addr);
@@ -766,7 +766,7 @@ long long node_key_num(redisClusterContext *cc, cluster_node *node, int isprint)
     }
     
 
-    c = ctx_get_by_node(node, NULL, cc->flags);
+    c = ctx_get_by_node(cc, node);
     if(c == NULL)
     {   
         if(isprint)
@@ -897,7 +897,7 @@ long long node_memory_size(redisClusterContext *cc, cluster_node *node, int ispr
         return -1;
     }
     
-    c = ctx_get_by_node(node, NULL, cc->flags);
+    c = ctx_get_by_node(cc, node);
     if(c == NULL)
     {   
         if(isprint)
@@ -1028,7 +1028,7 @@ sds node_cluster_state(rctContext *ctx, cluster_node *node, void *data, int ispr
         log_stdout("");
     }
 
-    c = ctx_get_by_node(node, NULL, cc->flags);
+    c = ctx_get_by_node(cc, node);
     if(c == NULL)
     {   
         if(isprint)
@@ -1434,7 +1434,7 @@ static int do_command_with_node(rctContext *ctx, cluster_node *node,
         log_stdout("");
     }
     
-    c = ctx_get_by_node(node, NULL, cc->flags);
+    c = ctx_get_by_node(cc, node);
     if(c == NULL)
     {   
         log_stdout("%s[%s] get connect failed", 
@@ -1963,7 +1963,7 @@ int async_command_init(async_command *acmd, rctContext *ctx, char *addrs, int fl
         goto error;
     }
 
-    acmd->nodes = acmd->acc->cc->nodes;
+    acmd->nodes = acmd->acc->cc.nodes;
 
     acmd->loop = aeCreateEventLoop(1000);
     if(acmd->loop == NULL){
@@ -4216,8 +4216,8 @@ int async_reply_cluster_create(async_command *acmd)
     log_stdout("\nAll nodes joined!");
 
     async_command_reset(acmd);
-    cluster_update_route(ctx->acmd->acc->cc);
-    acmd->nodes = acmd->acc->cc->nodes;
+    cluster_update_route(&ctx->acmd->acc->cc);
+    acmd->nodes = acmd->acc->cc.nodes;
 
     rinsts = ctx->private_data;
 
@@ -5380,7 +5380,7 @@ static long long scan_keys_job_one_node(del_keys_node *node_data)
 
     log_debug(LOG_VERB, "scan_keys_job() node:%s", node->addr);
     
-    c = ctx_get_by_node(node, NULL, cc->flags);
+    c = ctx_get_by_node(cc, node);
     if(c == NULL)
     {   
         log_stdout("%s[%s] get connect failed", 
