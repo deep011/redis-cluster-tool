@@ -1963,7 +1963,7 @@ int async_command_init(async_command *acmd, rctContext *ctx, char *addrs, int fl
         goto error;
     }
 
-    acmd->nodes = acmd->acc->cc.nodes;
+    acmd->nodes = acmd->acc->cc->nodes;
 
     acmd->loop = aeCreateEventLoop(1000);
     if(acmd->loop == NULL){
@@ -4217,7 +4217,7 @@ int async_reply_cluster_create(async_command *acmd)
 
     async_command_reset(acmd);
     cluster_update_route(&ctx->acmd->acc->cc);
-    acmd->nodes = acmd->acc->cc.nodes;
+    acmd->nodes = acmd->acc->cc->nodes;
 
     rinsts = ctx->private_data;
 
