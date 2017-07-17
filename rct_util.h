@@ -186,8 +186,8 @@ void rct_assert(const char *cond, const char *file, int line, int panic);
 void rct_stacktrace(int skip_count);
 void rct_stacktrace_fd(int fd);
 
-int _scnprintf(char *buf, size_t size, const char *fmt, ...);
-int _vscnprintf(char *buf, size_t size, const char *fmt, va_list args);
+static int _scnprintf(char *buf, size_t size, const char *fmt, ...);
+static int _vscnprintf(char *buf, size_t size, const char *fmt, va_list args);
 int64_t rct_usec_now(void);
 int64_t rct_msec_now(void);
 

@@ -89,6 +89,7 @@ struct instance {
     char            *conf_filename;              /* configuration filename */
     int             interval;                    /* stats aggregation interval */
     char            *addr;                       /* stats monitoring addr */
+    char            *auth;                       /* auth */
     char            hostname[RCT_MAXHOSTNAMELEN]; /* hostname */
     pid_t           pid;                         /* process id */
     char            *pid_filename;               /* pid filename */
@@ -111,6 +112,7 @@ typedef struct rctContext {
     redisClusterContext *cc;
     dict *commands; /* Command table */
     sds address;
+    sds auth;
     char *cmd;
     uint8_t redis_role;
     uint8_t simple;
