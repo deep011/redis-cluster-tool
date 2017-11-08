@@ -4,6 +4,7 @@
 #include<adapters/ae.h>
 #include<hiutil.h>
 #include<time.h>
+#include <unistd.h>
 
 #define RCT_AE_CONTINUE     0
 #define RCT_AE_STOP         1
@@ -64,6 +65,7 @@ create_context(struct instance *nci)
 
     rct_ctx->cc = NULL;
     rct_ctx->address = NULL;
+    rct_ctx->conf_filename = NULL;
 
     commands = dictCreate(&commandTableDictType,NULL);
     if(commands == NULL)
@@ -133,6 +135,10 @@ create_context(struct instance *nci)
 
     rct_ctx->buffer_size = nci->buffer_size;
     rct_ctx->thread_count = nci->thread_count;
+    rct_ctx->commands_limit_per_second = nci->commands_limit_per_second;
+
+    if (nci->conf_filename)
+        rct_ctx->conf_filename = sdsnew(nci->conf_filename);
 
     rct_ctx->acmd = NULL;
     rct_ctx->private_data = NULL;
@@ -159,6 +165,10 @@ void destroy_context(rctContext *rct_ctx)
 
     if (rct_ctx->address) {
         sdsfree(rct_ctx->address);
+    }
+
+    if (rct_ctx->conf_filename) {
+        sdsfree(rct_ctx->conf_filename);
     }
     
     rct_free(rct_ctx);
@@ -4831,6 +4841,7 @@ typedef struct del_keys_node{
     long long deleted_keys_num;
     int sd_notice;  //used to notice the delete thread to delete keys
     int scan_node_finish;
+    long long cmds_sent_at_this_period;
 }del_keys_node;
 
 //for the scan thread
@@ -4891,6 +4902,7 @@ static int del_keys_node_init(del_keys_node *node_data,
     node_data->keys = NULL;
     node_data->scan_data = NULL;
     node_data->del_data = NULL;
+    node_data->cmds_sent_at_this_period = 0;
 
     node_data->sd_notice = socket(AF_INET, SOCK_STREAM, 0);
     if (node_data->sd_notice < 0) 
@@ -5237,12 +5249,19 @@ static void scan_keys_callback(redisAsyncContext *ac, void *r, void *privdata)
     {
         log_debug(LOG_VERB, "key : %s", sub_reply->element[i]->str);
         
-        mttlist_push(keys, sub_reply->element[i]->str);
-        sub_reply->element[i]->str = NULL;
+        mttlist_push(keys, sdsnewlen(sub_reply->element[i]->str,sub_reply->element[i]->len));
         aeCreateFileEvent(del_data->loop, sd_notice, 
             AE_WRITABLE, delete_keys_job, node_data);
+        node_data->cmds_sent_at_this_period ++;
     } 
 
+
+    if (ctx->commands_limit_per_second > 0 &&
+        node_data->cmds_sent_at_this_period >= 
+        ctx->commands_limit_per_second) {
+        sleep(1);
+        node_data->cmds_sent_at_this_period = 0;
+    }
 
     //step 2: Continue to get the keys.
     if(cursor > 0)
@@ -5250,7 +5269,7 @@ static void scan_keys_callback(redisAsyncContext *ac, void *r, void *privdata)
         redisAsyncCommand(ac, scan_keys_callback, node_data, 
             "scan %lld MATCH %s COUNT %d", cursor, 
             *(sds*)hiarray_get(&ctx->args, 0), 1000);
-
+        node_data->cmds_sent_at_this_period ++;
         return;
     }
 
@@ -5327,8 +5346,14 @@ static void delete_keys_job(aeEventLoop *el, int fd, void *privdata, int mask)
     {
         log_debug(LOG_VERB, "key: %s", key);
         node_data->scan_keys_num ++;
-        redisAsyncCommand(ac, delete_keys_callback, node_data, "del %s", key);
-        free(key);
+        char *argv[2];
+        size_t argvlen[2];
+        argv[0] = "del";
+        argv[1] = key;
+        argvlen[0] = 3;
+        argvlen[1] = sdslen(key);
+        redisAsyncCommandArgv(ac, delete_keys_callback, node_data, 2, argv, argvlen);
+        sdsfree(key);
     }
 }
 
@@ -5516,6 +5541,7 @@ void *scan_keys_job_run(void *args)
         redisAsyncCommand(ac, scan_keys_callback, node_data, 
             "scan %lld MATCH %s COUNT %d", node_data->cursor, 
             *(sds*)hiarray_get(&ctx->args, 0), 1000);
+        node_data->cmds_sent_at_this_period ++;
 	}
     
     listReleaseIterator(it);

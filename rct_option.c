@@ -36,10 +36,11 @@ static struct option long_options[] = {
     { "thread",        	required_argument,  NULL,   't' },
     { "buffer",        	required_argument,  NULL,   'b' },
     { "step",        	required_argument,  NULL,   'S' },
+    { "limit",        	required_argument,  NULL,   'l' },
     { NULL,             0,                  NULL,    0  }
 };
 
-static char short_options[] = "hVdo:v:c:a:i:p:C:r:st:b:S:";
+static char short_options[] = "hVdo:v:c:a:i:p:C:r:st:b:S:l:";
 
 void
 rct_show_usage(void)
@@ -67,6 +68,7 @@ rct_show_usage(void)
         "  -r, --role=S           : set the role of the nodes that command to execute on (default: %s, you can input: %s, %s or %s)" CRLF
         "  -t, --thread=N         : set how many threads to run the job(default: %d)" CRLF
         "  -b, --buffer=S         : set buffer size to run the job (default: %lld byte, unit:G/M/K)" CRLF
+        "  -l, --limit=S          : set max commands to be executed per second for every redis node (default is not limited)" CRLF
         "",
         RCT_LOG_DEFAULT, RCT_LOG_MIN, RCT_LOG_MAX,
         RCT_LOG_PATH != NULL ? RCT_LOG_PATH : "stderr",
@@ -120,6 +122,8 @@ rct_set_default_options(struct instance *nci)
 	nci->simple = 0;
     nci->thread_count = RCT_OPTION_THREAD_COUNT_DEFAULT;
     nci->buffer_size = RCT_OPTION_BUFFER_DEFAULT;
+
+    nci->commands_limit_per_second = 0;
 }
 
 r_status
@@ -233,6 +237,16 @@ rct_get_options(int argc, char **argv, struct instance *nci)
             }
 
             nci->buffer_size = big_value;
+            break;
+            
+        case 'l':
+            value = rct_atoi(optarg);
+            if (value < 0) {
+                log_stderr("redis-cluster-tool: option -l requires a number");
+                return RCT_ERROR;
+            }
+            
+            nci->commands_limit_per_second = value;
             break;
 			
         case '?':

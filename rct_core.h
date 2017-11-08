@@ -105,17 +105,20 @@ struct instance {
     int             simple;
     int             thread_count;
     uint64_t        buffer_size;
+    int        commands_limit_per_second;
 };
 
 typedef struct rctContext {
     redisClusterContext *cc;
     dict *commands; /* Command table */
     sds address;
+    sds conf_filename;
     char *cmd;
     uint8_t redis_role;
     uint8_t simple;
     int thread_count;
     uint64_t buffer_size;
+    int commands_limit_per_second;
     struct hiarray args; /* sds[] */
     struct async_command *acmd;
     void *private_data;
