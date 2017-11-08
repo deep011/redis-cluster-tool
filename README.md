@@ -42,6 +42,7 @@ If you want to support other OS packages, please contact with me.
 					[-c conf file] [-a addr] [-i interval]
 					[-p pid file] [-C command] [-r redis role]
 					[-t thread number] [-b buffer size]
+                                        [-l commands limit]
 	
 	Options:
 	-h, --help             : this help
@@ -58,6 +59,7 @@ If you want to support other OS packages, please contact with me.
 	-r, --role=S           : set the role of the nodes that command to execute on (default: all, you can input: all, master or slave)
 	-t, --thread=N         : set how many threads to run the job(default: 8)
 	-b, --buffer=S         : set buffer size to run the job (default: 1048576 byte, unit:G/M/K)
+        -l, --limit=S          : set max commands to be executed per second for every redis node (default is not limited)
 	
 	Commands:
 		cluster_state                 :Show the cluster state.

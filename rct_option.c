@@ -50,6 +50,7 @@ rct_show_usage(void)
         "                  [-c conf file] [-a addr] [-i interval]" CRLF
         "                  [-p pid file] [-C command] [-r redis role]" CRLF
         "                  [-t thread number] [-b buffer size]" CRLF
+        "                  [-l commands limit]" CRLF
         "");
     log_stderr(
         "Options:" CRLF
