@@ -5,6 +5,8 @@
 #include <sys/un.h>
 #include <netinet/in.h>
 
+#include <sds.h>
+
 #define LF                  (uint8_t) 10
 #define CR                  (uint8_t) 13
 #define CRLF                "\x0d\x0a"
@@ -301,6 +303,10 @@ _rct_strrchr(uint8_t *p, uint8_t *start, uint8_t c)
 uint64_t size_string_to_integer_byte(char *size, int size_len);
 
 int str_is_integer(char *str, int len);
+
+int sds_compare_to_string(sds s, char *str, int len);
+
+sds get_absolute_path(char *filename);
 
 #endif
 

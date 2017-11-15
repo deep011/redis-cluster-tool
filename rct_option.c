@@ -2,7 +2,7 @@
 
 #include "rct_core.h"
 
-#define RCT_CONF_PATH        	"conf/rct.yml"
+#define RCT_CONF_PATH        	NULL
 
 #define RCT_LOG_PATH         	NULL
 

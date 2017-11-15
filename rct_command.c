@@ -6,7 +6,7 @@ struct RCTCommand rctCommandTable[] = {
     {RCT_CMD_CLUSTER_STATE, "Show the cluster state.", 
         cluster_state, -1, 0, 0, 4},
     {RCT_CMD_CLUSTER_CREATE, "Create a cluster.", 
-        cluster_create, -1, 3, -1, 2},
+        cluster_create, -1, 0, -1, 2},
     {RCT_CMD_CLUSTER_DESTROY, "Destroy the cluster.", 
         cluster_destroy, -1, 0, 0, 1},
     {RCT_CMD_CLUSTER_DEL_ALL_SLAVES, "Delete all the slaves in the cluster.", 
@@ -63,100 +63,23 @@ void cluster_create(rctContext *ctx , int type)
 {   
     int ret;
     uint32_t i, j, k;
-    sds *str;
-    int replicas;
     redisContext *con_m, *con_s;
-    struct hiarray *nodes = NULL;
+    struct hiarray *nodes;
     redis_instance *master, *slave, *node, *node_slave;
-    int master_count;
-    int slot_begin, slot_step, remainder;
-    sds *master_slaves = NULL, *slaves_str = NULL;
-    int master_slaves_count, slaves_str_count;
     redisReply *reply = NULL;
     listIter *it = NULL, *it_node = NULL;
     listNode *ln;
     sds command_addslot = NULL;
-    
-    if(hiarray_n(&ctx->args) < 3){
-        log_error("Error: there must have at least three args for command %s", ctx->cmd);
-        return;
-    }
+    rct_conf *cf;
 
-    replicas = 0;
-    slot_begin = 0;
-    slot_step = 0;
-
-    str = hiarray_get(&ctx->args, 0);
-    if(strcmp(*str, "--replicas") == 0){
-        str = hiarray_get(&ctx->args, 1);
-        if(str_is_integer(*str, sdslen(*str))){
-            replicas = rct_atoi(str);
-        }else{
-            log_error("Error: there must have an integer behind --replicas in the command %s", ctx->cmd);
+    if (ctx->cf == NULL) {
+        ctx->cf = rct_conf_create_from_string(&ctx->args);
+        if (ctx->cf == NULL)
             return;
-        }
     }
 
-    master_count = hiarray_n(&ctx->args);
-    slot_step = REDIS_CLUSTER_SLOTS/master_count;
-    remainder = REDIS_CLUSTER_SLOTS%master_count;
-
-    nodes = hiarray_create(master_count, sizeof(redis_instance));
-    if(nodes == NULL){
-        log_stdout("Out of memory");
-        goto error;
-    }
-
-    for(i = 0; i < master_count; i ++){
-        str = hiarray_get(&ctx->args, i);
-        master_slaves = sdssplitlen(*str, sdslen(*str), "[", 1, &master_slaves_count);
-        if(master_slaves == NULL || (master_slaves_count != 1 && 
-            master_slaves_count != 2)){
-            log_stdout("The address is error.");
-            goto error;
-        }
-        
-        master = hiarray_push(nodes);
-        ret = redis_instance_init(master, master_slaves[0], RCT_REDIS_ROLE_MASTER);
-        if(ret != RCT_OK){
-            log_stdout("Init redis master instance error.");
-            goto error;
-        }
-
-        master->slots_start = slot_begin;
-        master->slots_count = slot_step + (remainder>0?1:0);
-        slot_begin += master->slots_count;
-        if(remainder > 0)   remainder--;
-
-        if(master_slaves_count > 1){
-            sdsrange(master_slaves[1], 0, -2);
-            slaves_str = sdssplitlen(master_slaves[1], sdslen(master_slaves[1]), 
-                "|", 1, &slaves_str_count);
-            if(slaves_str == NULL || slaves_str_count <= 0){
-                log_stdout("Slaves address %s is error.", master_slaves[1]);
-                goto error;
-            }
-
-            for(k = 0; k < slaves_str_count; k ++){
-                slave = redis_instance_create(slaves_str[k], RCT_REDIS_ROLE_SLAVE);
-                if(slave == NULL){
-                    log_stdout("Init redis slave instance error.");
-                    goto error;
-                }
-
-                listAddNodeTail(master->slaves, slave);
-            }
-
-            sdsfreesplitres(slaves_str, slaves_str_count);
-            slaves_str = NULL;
-        }
-
-        sdsfreesplitres(master_slaves, master_slaves_count);
-        master_slaves = NULL;
-    }
-
-    RCT_ASSERT(master_count == hiarray_n(nodes));
-
+    nodes = ctx->cf->nodes;
+    
     command_addslot = sdsnew("cluster addslots");
 
     for (i = 0; i < hiarray_n(nodes); i++) {
@@ -207,21 +130,23 @@ void cluster_create(rctContext *ctx , int type)
             }
         }
 
-        sdsrange(command_addslot, 0, 15);
-        for(k = master->slots_start; k < master->slots_start+master->slots_count; k ++){
-            command_addslot = sdscatfmt(command_addslot, " %i", k);
-        }
+        if (master->slots_count > 0) {
+            sdsrange(command_addslot, 0, 15);
+            for(k = master->slots_start; k < master->slots_start+master->slots_count; k ++){
+                command_addslot = sdscatfmt(command_addslot, " %i", k);
+            }
 
-        reply = redisCommand(con_m, command_addslot);
-        if(reply == NULL || reply->type != REDIS_REPLY_STATUS || 
-            strcmp(reply->str, "OK") != 0){
-            log_stdout("Command \"cluster addslot\" reply error: %s.", 
-                reply==NULL?"NULL":(reply->type == REDIS_REPLY_ERROR?reply->str:"other"));
-            goto error;
-        }
+            reply = redisCommand(con_m, command_addslot);
+            if(reply == NULL || reply->type != REDIS_REPLY_STATUS || 
+                strcmp(reply->str, "OK") != 0){
+                log_stdout("Command \"cluster addslot\" reply error: %s.", 
+                    reply==NULL?"NULL":(reply->type == REDIS_REPLY_ERROR?reply->str:"other"));
+                goto error;
+            }
 
-        freeReplyObject(reply);
-        reply = NULL;
+            freeReplyObject(reply);
+            reply = NULL;
+        }
 
         if (master->slaves) {            
             it = listGetIterator(master->slaves, AL_START_HEAD);
@@ -301,14 +226,6 @@ void cluster_create(rctContext *ctx , int type)
     
 error:
 
-    if(master_slaves != NULL){
-        sdsfreesplitres(master_slaves, master_slaves_count);
-    }
-
-    if(slaves_str != NULL){
-        sdsfreesplitres(slaves_str, slaves_str_count);
-    }
-
     if(reply != NULL){
         freeReplyObject(reply);
     }
@@ -319,15 +236,6 @@ error:
 
     if(it_node){
         listReleaseIterator(it_node);
-    }
-
-    if(nodes != NULL){
-        while(hiarray_n(nodes) > 0){
-            master = hiarray_pop(nodes);
-            redis_instance_deinit(master);
-        }
-        
-        hiarray_destroy(nodes);
     }
 
     if(command_addslot != NULL){

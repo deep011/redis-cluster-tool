@@ -65,7 +65,7 @@ create_context(struct instance *nci)
 
     rct_ctx->cc = NULL;
     rct_ctx->address = NULL;
-    rct_ctx->conf_filename = NULL;
+    rct_ctx->cf = NULL;
 
     commands = dictCreate(&commandTableDictType,NULL);
     if(commands == NULL)
@@ -137,9 +137,28 @@ create_context(struct instance *nci)
     rct_ctx->thread_count = nci->thread_count;
     rct_ctx->commands_limit_per_second = nci->commands_limit_per_second;
 
-    if (nci->conf_filename)
-        rct_ctx->conf_filename = sdsnew(nci->conf_filename);
+    if (nci->conf_filename) {
+        rct_ctx->cf = rct_conf_create_from_file(nci->conf_filename);
+        if (rct_ctx->cf == NULL) {
+            destroy_context(rct_ctx);
+            return NULL;
+        }
 
+        //rct_dump_conf(rct_ctx->cf);
+
+        if (rct_ctx->address == NULL) {
+            for (j = 0; j < hiarray_n(rct_ctx->cf->nodes); j ++) {
+                redis_instance *master = hiarray_get(rct_ctx->cf->nodes, j);
+                if (rct_ctx->address == NULL) {
+                    rct_ctx->address = sdsnew(master->addr);
+                } else {
+                    rct_ctx->address = sdscat(rct_ctx->address, ",");
+                    rct_ctx->address = sdscatsds(rct_ctx->address, master->addr);
+                }
+            }
+        }
+    }
+    
     rct_ctx->acmd = NULL;
     rct_ctx->private_data = NULL;
     
@@ -167,8 +186,8 @@ void destroy_context(rctContext *rct_ctx)
         sdsfree(rct_ctx->address);
     }
 
-    if (rct_ctx->conf_filename) {
-        sdsfree(rct_ctx->conf_filename);
+    if (rct_ctx->cf) {
+        rct_conf_destroy(rct_ctx->cf);
     }
     
     rct_free(rct_ctx);
@@ -4226,7 +4245,7 @@ int async_reply_cluster_create(async_command *acmd)
     log_stdout("\nAll nodes joined!");
 
     async_command_reset(acmd);
-    cluster_update_route(&ctx->acmd->acc->cc);
+    cluster_update_route(ctx->acmd->acc->cc);
     acmd->nodes = acmd->acc->cc->nodes;
 
     rinsts = ctx->private_data;
@@ -4682,6 +4701,7 @@ int redis_instance_init(redis_instance *node, const char *addr, int role)
     node->slaves = NULL;
     node->slots_start = 0;
     node->slots_count = 0;
+    node->slots_weight = 1;
 
     node->addr = sdsnew(addr);
     
@@ -4775,11 +4795,11 @@ void redis_instance_deinit(redis_instance *node)
         node->con = NULL;
     }
 
-    if(node->slaves){
+    if (node->slaves) {        
         listRelease(node->slaves);
         node->slaves = NULL;
     }
-   
+   
     node->slots_start = 0;
     node->slots_count = 0;
 }

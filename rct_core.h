@@ -80,6 +80,8 @@ typedef int err_t;     /* error type */
 #include "rct_command.h"
 #include "rct_mttlist.h"
 #include "rct_locklist.h"
+#include "rct_conf.h"
+
 
 struct async_command;
 
@@ -112,13 +114,13 @@ typedef struct rctContext {
     redisClusterContext *cc;
     dict *commands; /* Command table */
     sds address;
-    sds conf_filename;
     char *cmd;
     uint8_t redis_role;
     uint8_t simple;
     int thread_count;
     uint64_t buffer_size;
     int commands_limit_per_second;
+    rct_conf *cf;
     struct hiarray args; /* sds[] */
     struct async_command *acmd;
     void *private_data;
@@ -192,6 +194,8 @@ typedef struct redis_instance{
     hilist *slaves;
     int slots_start;
     int slots_count;
+
+    int slots_weight;
 }redis_instance;
 
 int redis_instance_init(redis_instance *node, const char *addr, int role);
