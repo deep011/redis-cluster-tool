@@ -144,7 +144,7 @@ create_context(struct instance *nci)
             return NULL;
         }
 
-        //rct_dump_conf(rct_ctx->cf);
+        rct_conf_debug_show(rct_ctx->cf);
 
         if (rct_ctx->address == NULL) {
             for (j = 0; j < hiarray_n(rct_ctx->cf->nodes); j ++) {
@@ -2199,28 +2199,28 @@ static int do_command_one_node_async(async_command *acmd, struct cluster_node *n
     size_t *argvlen;
     sds *str;
         
-    if(acmd == NULL || node == NULL){
+    if (acmd == NULL || node == NULL) {
         return RCT_ERROR;
     }
 
     data = rct_alloc(sizeof(*data));
-    if(data == NULL){
+    if (data == NULL) {
         return RCT_ENOMEM;
     }
 
     data->acmd = acmd;
     data->node = node;
     ac = actx_get_by_node(acmd->acc, node);
-    if(acmd->parameters == NULL){
+    if (acmd->parameters == NULL) {
         ret = redisAsyncCommand(ac, async_callback_func, data, acmd->command);
-    }else{
+    } else {
         argc = 1 + hiarray_n(acmd->parameters);
         argv = rct_alloc(argc * sizeof(*argv));
         argvlen = rct_alloc(argc * sizeof(*argvlen));
 
         argv[0] = acmd->command;
         argvlen[0] = sdslen(acmd->command);
-        for(i = 1; i < argc; i ++){
+        for (i = 1; i < argc; i ++) {
             str = hiarray_get(acmd->parameters, i - 1);
             argv[i] = *str;
             argvlen[i] = sdslen(*str);
@@ -2232,7 +2232,7 @@ static int do_command_one_node_async(async_command *acmd, struct cluster_node *n
         rct_free(argvlen);
     }
 
-    if(ret != REDIS_OK){
+    if (ret != REDIS_OK) {
         if(ac->err) log_error("err: %s", ac->errstr);
         return RCT_ERROR;
     }
@@ -4607,6 +4607,131 @@ error:
     return RCT_AE_STOP;
 }
 
+int async_reply_dump_conf_file(async_command *acmd)
+{
+    int ret;
+    hilist *cluster_slaves;
+    listIter *li = NULL;
+    listNode *ln;
+    dictIterator *di = NULL;
+    dictEntry *de;
+    dict *cluster_nodes;
+    rctContext *ctx = acmd->ctx;
+    struct cluster_node *cluster_master, *cluster_slave;
+    struct hiarray *nodes = NULL;
+    struct redis_instance *master, *slave;
+    sds command = NULL;
+    sds conf_info_string = NULL;
+    sds filename = NULL;
+
+    if(acmd == NULL)
+    {
+        return RCT_AE_STOP;
+    }
+
+    async_reply_display(acmd);
+    
+    cluster_nodes = acmd->nodes;
+    if(cluster_nodes == NULL)
+    {
+        return RCT_AE_STOP;
+    }
+
+    command = sdsnew("");
+
+    nodes = hiarray_create(dictSize(cluster_nodes), sizeof(struct redis_instance));
+    if (nodes == NULL) {
+        log_stderr("ERROR: out of memory.");
+        goto error;
+    }
+
+    /* step 1: cluster forget all nodes */
+    di = dictGetIterator(cluster_nodes);
+    while((de = dictNext(di)) != NULL) {
+        cluster_master = dictGetEntryVal(de);
+
+        master = hiarray_push(nodes);
+        if (master == NULL) {
+            log_stderr("ERROR: out of memory.");
+            goto error;
+        }
+        ret = redis_instance_init(master, cluster_master->addr, RCT_REDIS_ROLE_MASTER);
+        if (ret != RCT_OK) {
+            goto error;
+        }
+        master->slots_count = node_hold_slot_num(cluster_master, NULL, 0);
+        
+        cluster_slaves = cluster_master->slaves;
+        if (cluster_slaves == NULL) {
+            continue;
+        }
+        
+        li = listGetIterator(cluster_slaves, AL_START_HEAD);
+        while ((ln = listNext(li)) != NULL) {
+            cluster_slave = listNodeValue(ln);
+            slave = redis_instance_create(cluster_slave->addr, RCT_REDIS_ROLE_SLAVE);
+            if (slave == NULL) {
+                goto error;
+            }
+            listAddNodeTail(master->slaves, slave);
+        }
+
+        listReleaseIterator(li);
+    }
+    dictReleaseIterator(di);
+    di = NULL;
+
+    conf_info_string = generate_conf_info_string(nodes);
+    if (hiarray_n(&ctx->args) > 0) {
+        filename = hiarray_get(&ctx->args, 0);
+    } else if (ctx->cf != NULL) {
+        filename = ctx->cf->fname;
+    }
+    dump_conf_file(filename, conf_info_string);
+
+    sdsfree(command);
+    sdsfree(conf_info_string);
+
+    while (hiarray_n(nodes) > 0) {
+        redis_instance *master = hiarray_pop(nodes);
+        redis_instance_deinit(master);
+    }
+    hiarray_destroy(nodes);
+
+    log_stdout("");
+    log_stdout("Cluster conf file dumped complete.");
+    
+    return RCT_AE_STOP;
+
+error:
+
+    if(di != NULL){
+        dictReleaseIterator(di);
+    }
+
+    if(li != NULL){
+        listReleaseIterator(li);
+    }
+
+    if(command != NULL){
+        sdsfree(command);
+    }
+
+    if(conf_info_string != NULL){
+        sdsfree(conf_info_string);
+    }
+
+    if (nodes != NULL) {
+        while (hiarray_n(nodes) > 0) {
+            redis_instance *master = hiarray_pop(nodes);
+            redis_instance_deinit(master);
+        }
+        hiarray_destroy(nodes);
+    }
+
+    return RCT_AE_STOP;
+}
+
 redisReply *redis_reply_clone(redisReply *r)
 {
     int j;
@@ -4699,7 +4824,7 @@ int redis_instance_init(redis_instance *node, const char *addr, int role)
     node->con = NULL;
     node->role = RCT_REDIS_ROLE_NULL;
     node->slaves = NULL;
-    node->slots_start = 0;
+    node->slots = NULL;
     node->slots_count = 0;
     node->slots_weight = 1;
 
@@ -4729,6 +4854,12 @@ int redis_instance_init(redis_instance *node, const char *addr, int role)
         goto error;
     }
 
+    node->slots = hiarray_create(1, sizeof(slots_region));
+    if (node->slots == NULL) {
+        log_stdout("Out of memory");
+        goto error;
+    }
+    
     node->slaves = listCreate();
     if(node->slaves == NULL){
         log_stdout("Out of memory");
@@ -4799,8 +4930,12 @@ void redis_instance_deinit(redis_instance *node)
         listRelease(node->slaves);
         node->slaves = NULL;
     }
-   
-    node->slots_start = 0;
+
+    if (node->slots) {
+        hiarray_destroy(node->slots);
+        node->slots = NULL;
+    }
+
     node->slots_count = 0;
 }
 

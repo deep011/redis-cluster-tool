@@ -18,15 +18,18 @@
 #define RCT_CMD_CLUSTER_CONFIG_GET		"cluster_config_get"
 #define RCT_CMD_CLUSTER_CONFIG_SET		"cluster_config_set"
 #define RCT_CMD_CLUSTER_CONFIG_REWRITE	"cluster_config_rewrite"
+#define RCT_CMD_CLUSTER_DUMP_CONF_FILE	"cluster_dump_conf_file"
 #define RCT_CMD_CLUSTER_DO_COMMAND		"cluster_do_command"
 #define RCT_CMD_CLUSTER_GET_STATE		"cluster_get_state"
 #define RCT_CMD_NODE_LIST				"node_list"
 #define RCT_CMD_DEL_KEYS				"del_keys"
 
 
-#define CMD_FLAG_NEED_CONFIRM 			(1<<0)
-#define CMD_FLAG_NOT_NEED_ADDRESS		(1<<1)
-#define CMD_FLAG_NEED_SYNCHRONOUS		(1<<2)
+#define CMD_FLAG_NULL                   0       /* 0 */
+#define CMD_FLAG_NEED_CONFIRM           (1<<0)  /* 1 */
+#define CMD_FLAG_NOT_NEED_ADDRESS       (1<<1)  /* 2 */
+#define CMD_FLAG_NEED_SYNCHRONOUS       (1<<2)  /* 4 */
+#define CMD_FLAG_MAY_NOT_BE_CLUSTER     (1<<3)  /* 8 */
 
 struct rctContext;
 
@@ -52,7 +55,7 @@ typedef struct RCTCommand {
 	char *description;
 	RCTCommandProc *proc;
 	int type;
-	int min_arg_count;
+    int min_arg_count;
 	int max_arg_count;
 	int flag;
 }RCTCommand;
@@ -74,5 +77,6 @@ void cluster_check(struct rctContext *ctx , int type);
 void cluster_create(struct rctContext *ctx , int type);
 void cluster_destroy(struct rctContext *ctx , int type);
 void cluster_delete_all_slaves(struct rctContext *ctx , int type);
+void cluster_dump_conf_file(struct rctContext *ctx , int type);
 
 #endif

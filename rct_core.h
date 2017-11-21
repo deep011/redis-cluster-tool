@@ -184,15 +184,23 @@ int async_reply_check_cluster(async_command *acmd);
 int async_reply_destroy_cluster(async_command *acmd);
 int async_reply_cluster_create(async_command *acmd);
 int async_reply_delete_all_slaves(async_command *acmd);
+int async_reply_dump_conf_file(async_command *acmd);
+
+typedef struct slots_region
+{
+    uint32_t start;
+    uint32_t end;
+} slots_region;
 
 typedef struct redis_instance{
     sds addr;
     sds host;
     int port;
     redisContext *con;
+
     uint8_t role;
     hilist *slaves;
-    int slots_start;
+    struct hiarray *slots; /* struct slots_region */
     int slots_count;
 
     int slots_weight;

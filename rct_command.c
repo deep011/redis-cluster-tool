@@ -4,43 +4,45 @@
 
 struct RCTCommand rctCommandTable[] = {
     {RCT_CMD_CLUSTER_STATE, "Show the cluster state.", 
-        cluster_state, -1, 0, 0, 4},
+        cluster_state, -1, 0, 0, CMD_FLAG_NEED_SYNCHRONOUS},
     {RCT_CMD_CLUSTER_CREATE, "Create a cluster.", 
-        cluster_create, -1, 0, -1, 2},
+        cluster_create, -1, 0, -1, CMD_FLAG_NOT_NEED_ADDRESS},
     {RCT_CMD_CLUSTER_DESTROY, "Destroy the cluster.", 
-        cluster_destroy, -1, 0, 0, 1},
+        cluster_destroy, -1, 0, 0, CMD_FLAG_NEED_CONFIRM},
     {RCT_CMD_CLUSTER_DEL_ALL_SLAVES, "Delete all the slaves in the cluster.", 
-        cluster_delete_all_slaves, -1, 0, 0, 1},
+        cluster_delete_all_slaves, -1, 0, 0, CMD_FLAG_NEED_CONFIRM},
     {RCT_CMD_CLUSTER_CHECK, "Check the cluster.", 
-        cluster_check, -1, 0, 0, 0},
+        cluster_check, -1, 0, 0, CMD_FLAG_NULL},
     {RCT_CMD_CLUSTER_USED_MEMORY, "Show the cluster used memory.", 
-        cluster_used_memory, -1, 0, 0, 0},
+        cluster_used_memory, -1, 0, 0, CMD_FLAG_NULL},
     {RCT_CMD_CLUSTER_KEYS_NUM, "Show the cluster holds keys num.", 
-        cluster_keys_num, -1, 0, 0, 0},
+        cluster_keys_num, -1, 0, 0, CMD_FLAG_NULL},
     {RCT_CMD_CLUSTER_NODE_INFO, "Show the cluster nodes state in the \"info\" command.", 
-        cluster_node_state, -1, 1, 1, 0},
+        cluster_node_state, -1, 1, 1, CMD_FLAG_NULL},
     {RCT_CMD_CLUSTER_CLUSTER_INFO, "Show the cluster state in the \"cluster info\" command.", 
-        cluster_cluster_state, -1, 1, 1, 0},
+        cluster_cluster_state, -1, 1, 1, CMD_FLAG_NULL},
     {RCT_CMD_SLOTS_STATE, "Show the slots state.", 
-        slots_state, -1, 0, 0, 4},
+        slots_state, -1, 0, 0, CMD_FLAG_NEED_SYNCHRONOUS},
     {RCT_CMD_NODE_SLOT_NUM, "Show the node hold slots number.", 
-        show_nodes_hold_slot_num, -1, 0, 0, 4},
+        show_nodes_hold_slot_num, -1, 0, 0, CMD_FLAG_NEED_SYNCHRONOUS},
     {RCT_CMD_NEW_NODES_NAME, "Show the new nodes name that not covered slots.", 
-        show_new_nodes_name, -1, 0, 0, 4},
+        show_new_nodes_name, -1, 0, 0, CMD_FLAG_NEED_SYNCHRONOUS},
     {RCT_CMD_CLUSTER_REBALANCE, "Show the cluster how to rebalance.", 
-        cluster_rebalance, -1, 0, 0, 4},
+        cluster_rebalance, -1, 0, 0, CMD_FLAG_NEED_SYNCHRONOUS},
     {RCT_CMD_FLUSHALL, "Flush all the cluster.", 
-        cluster_flushall, -1, 0, 0, 1},
+        cluster_flushall, -1, 0, 0, CMD_FLAG_NEED_CONFIRM},
     {RCT_CMD_CLUSTER_CONFIG_GET, "Get config from every node in the cluster and check consistency.", 
-        cluster_config_get, -1, 1, 1, 0},
+        cluster_config_get, -1, 1, 1, CMD_FLAG_NULL},
     {RCT_CMD_CLUSTER_CONFIG_SET, "Set config to every node in the cluster.", 
-        cluster_config_set, -1, 2, 10, 1},
+        cluster_config_set, -1, 2, 10, CMD_FLAG_NEED_CONFIRM},
     {RCT_CMD_CLUSTER_CONFIG_REWRITE, "Rewrite every node config to echo node for the cluster.", 
-        cluster_config_rewrite, -1, 0, 0, 1},
+        cluster_config_rewrite, -1, 0, 0, CMD_FLAG_NEED_CONFIRM},
+    {RCT_CMD_CLUSTER_DUMP_CONF_FILE, "Dump the conf file for the cluster.", 
+        cluster_dump_conf_file, -1, 0, 1, CMD_FLAG_NULL},
     {RCT_CMD_NODE_LIST, "List the nodes", 
-        show_nodes_list, -1, 0, 0, 4},
+        show_nodes_list, -1, 0, 0, CMD_FLAG_NEED_SYNCHRONOUS},
     {RCT_CMD_DEL_KEYS, "Delete keys in the cluster. The keys must match a given glob-style pattern.(This command not block the redis)", 
-        cluster_del_keys, -1, 1, 1, 5}
+        cluster_del_keys, -1, 1, 1, CMD_FLAG_NEED_CONFIRM|CMD_FLAG_NEED_SYNCHRONOUS|CMD_FLAG_MAY_NOT_BE_CLUSTER}
 };
 
 void cluster_state(rctContext *ctx , int type)
@@ -132,8 +134,11 @@ void cluster_create(rctContext *ctx , int type)
 
         if (master->slots_count > 0) {
             sdsrange(command_addslot, 0, 15);
-            for(k = master->slots_start; k < master->slots_start+master->slots_count; k ++){
-                command_addslot = sdscatfmt(command_addslot, " %i", k);
+            for (j = 0; j < hiarray_n(master->slots); j ++) {
+                slots_region *sr = hiarray_get(master->slots, j);
+                for (k = sr->start; k <= sr->end; k ++) {
+                    command_addslot = sdscatfmt(command_addslot, " %i", k);
+                }
             }
 
             reply = redisCommand(con_m, command_addslot);
@@ -356,6 +361,13 @@ void cluster_config_rewrite(rctContext *ctx , int type)
 {
     cluster_async_call(ctx, "config rewrite", NULL, 
         ctx->redis_role, async_reply_status);
+}
+
+void cluster_dump_conf_file(rctContext *ctx , int type)
+{
+    ctx->redis_role = RCT_REDIS_ROLE_ALL;
+    cluster_async_call(ctx, "ping", NULL, 
+        ctx->redis_role, async_reply_dump_conf_file);
 }
 
 void

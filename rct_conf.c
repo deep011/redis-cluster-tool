@@ -2,17 +2,20 @@
 #include "rct_conf.h"
 
 #include <math.h>
+#include <fcntl.h>
+#include <unistd.h>
 
 static int conf_init(rct_conf *cf)
 {
     int ret;
 
-    if(cf == NULL){
+    if (cf == NULL) {
         return RCT_ERROR;
     }
 
     cf->fname = NULL;
-    cf->fh = NULL;
+
+    cf->type = REDIS_GROUP_TYPE_REDIS_CLUSTER;
 
     cf->total_maxmemory = 0;
     cf->total_master_count_with_slots = 0;
@@ -39,13 +42,8 @@ static void conf_deinit(rct_conf *cf)
         cf->fname = NULL;
     }
 
-    if (cf->fh != NULL) {
-        fclose(cf->fh);
-        cf->fh = NULL;
-    }
-
     if (cf->nodes != NULL) {
-         while(hiarray_n(cf->nodes) > 0){
+        while (hiarray_n(cf->nodes) > 0) {
             redis_instance *master = hiarray_pop(cf->nodes);
             redis_instance_deinit(master);
         }
@@ -93,10 +91,15 @@ static int assign_master_slots(struct hiarray *nodes)
 
     slots_begin = 0;
     for (i = 0; i < master_count; i ++) {
+        slots_region *sr;
+        
         master = hiarray_get(nodes, i);
         if (master->slots_weight <= 0) continue;
+
+        sr = hiarray_push(master->slots);
+        sr->start = slots_begin;
+        sr->end = sr->start + master->slots_count - 1;
         
-        master->slots_start = slots_begin;
         slots_begin += master->slots_count;
     }
     
@@ -196,6 +199,7 @@ error:
 
     return RCT_ERROR;
 }
+
 rct_conf *rct_conf_create_from_string(struct hiarray *configs)
 {
     int ret;
@@ -468,7 +472,8 @@ rct_conf *rct_conf_create_from_file(char * filename)
     }
 
     cf->fname = path;
-    cf->fh = fh;
+
+    fclose(fh);
     
     return cf;
 
@@ -500,10 +505,87 @@ void rct_conf_destroy(rct_conf *cf)
     rct_free(cf);
 }
 
+sds generate_conf_info_string(struct hiarray *nodes)
+{
+    sds info_str = sdsempty();
+    int i;
+    
+    if (nodes == NULL) {
+        log_stderr("ERROR: nodes is NULL.");
+        return;
+    }
 
-void rct_dump_conf(rct_conf *cf)
+    for (i = 0; i < hiarray_n(nodes); i++) {
+        redis_instance *master;
+
+        master = hiarray_get(nodes, i);
+        info_str = sdscatfmt(info_str,"master=%s:%i,slots_weight=%i\r\n", master->host, master->port, master->slots_count);
+
+        if (master->slaves) {
+            listIter *it = listGetIterator(master->slaves, AL_START_HEAD);
+            listNode *ln;
+            redis_instance *slave;
+            while((ln = listNext(it)) != NULL){
+                slave = listNodeValue(ln);
+                info_str = sdscatfmt(info_str,"slave=%s:%i\r\n", slave->host, slave->port);
+            }
+            
+            listReleaseIterator(it);
+        }
+    }
+
+    return info_str;
+}
+
+int dump_conf_file(char *filename, sds info_str)
+{
+    int fd = -1;
+    ssize_t len = 0;
+
+    if (filename == NULL) {
+        log_stdout("\r\nconf file:\r\n");
+        log_stdout("%s", info_str);
+        return RCT_OK;
+    }
+
+    if (access(filename, F_OK) == 0) {
+        sds filename_bak = sdsnew(filename);
+        filename_bak = sdscatfmt(filename_bak, ".%I", rct_usec_now());
+        if (rename(filename,filename_bak) != 0) {
+            log_stdout("WARN: The conf file is already exist, and can not rename to a bak file.");
+        }
+        sdsfree(filename_bak);
+    }
+
+    fd = open(filename, O_WRONLY|O_CREAT|O_TRUNC, S_IRUSR|S_IWUSR|S_IRGRP|S_IROTH);
+    if (fd < 0) {
+        log_stderr("ERROR: open conf file %s failed: %s", filename, strerror(errno));
+        return RCT_ERROR;
+    }
+
+    len = write(fd, info_str, sdslen(info_str));
+    if (len < 0) {
+        log_stderr("ERROR: write conf file %s failed: %s", filename, strerror(errno));
+        close(fd);
+        return RCT_ERROR;
+    } else if (len != sdslen(info_str)) {
+        log_stderr("ERROR: write not complete of conf file %s failed", filename);
+        close(fd);
+        return RCT_ERROR;
+    }
+
+    close(fd);
+    
+    return RCT_OK;
+}
+
+void rct_conf_debug_show(rct_conf *cf)
 {
     int i, j;
+    int show = 0;
+
+    if (show == 0)
+        return;
     
     if (cf == NULL) {
         log_stderr("ERROR: conf is NULL.");
@@ -517,11 +599,24 @@ void rct_dump_conf(rct_conf *cf)
     log_stdout("config every_node_maxclients: %d", cf->every_node_maxclients);
     
     for (i = 0; i < hiarray_n(cf->nodes); i++) {
-
         redis_instance *master;
+        sds slots_region_str = sdsempty();
 
         master = hiarray_get(cf->nodes, i);
-        log_stdout("config master: %s:%d, slots_weight: %d, slots_start: %d, slots_count: %d", master->host, master->port, master->slots_weight, master->slots_start, master->slots_count);
+        if (master->slots_count > 0) {
+            slots_region_str = sdscat(slots_region_str, "{");
+            for (j = 0; j < hiarray_n(master->slots); j ++) {
+                slots_region *sr = hiarray_get(master->slots, j);
+                slots_region_str = sdscatfmt(slots_region_str, "[%u, %u],", sr->start, sr->end);
+            }
+            sdsrange(slots_region_str, 0, sdslen(slots_region_str)-2);
+            slots_region_str = sdscat(slots_region_str, "}");
+        }
+
+        
+        log_stdout("config master: %s:%d, slots_weight: %d, slots_count: %d, slots_region: %s", 
+            master->host, master->port, master->slots_weight, master->slots_count, 
+            sdslen(slots_region_str) == 0?"NULL":slots_region_str);
 
         if (master->slaves) {
             listIter *it = listGetIterator(master->slaves, AL_START_HEAD);
