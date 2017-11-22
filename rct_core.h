@@ -193,9 +193,12 @@ typedef struct slots_region
 } slots_region;
 
 typedef struct redis_instance{
+    sds name;
+    
     sds addr;
     sds host;
     int port;
+
     redisContext *con;
 
     uint8_t role;
@@ -204,12 +207,15 @@ typedef struct redis_instance{
     int slots_count;
 
     int slots_weight;
+
+    int slots_to_import;  /* Positive number means this node need import slots from other nodes, minus number means this node need move slots to other nodes. */
 }redis_instance;
 
 int redis_instance_init(redis_instance *node, const char *addr, int role);
 void redis_instance_deinit(redis_instance *node);
 redis_instance *redis_instance_create(const char *addr, int role);
 void redis_instance_destroy(redis_instance *node);
+void rct_redis_instance_array_debug_show(struct hiarray *nodes);
 redisContext *cxt_get_by_redis_instance(redis_instance *node);
 
 #endif

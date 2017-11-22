@@ -209,9 +209,9 @@ typedef struct redis_node{
 static int
 reshard_node_move_num_cmp(const void *t1, const void *t2)
 {
-    const redis_node *s1 = t1, *s2 = t2;
+    const redis_instance *s1 = (const redis_instance *)t1, *s2 = (const redis_instance *)t2;
 
-    return s1->slot_num_move > s2->slot_num_move?1:-1;
+    return s1->slots_to_import > s2->slots_to_import?-1:1;
 }
 
 static int
@@ -328,7 +328,7 @@ int node_hold_slot_num(struct cluster_node *node, redis_node *r_node, int isprin
     return slot_count;
 }
 
-void cluster_rebalance(rctContext *ctx, int type)
+void cluster_rebalance1(rctContext *ctx, int type)
 {
     dict *nodes = ctx->cc->nodes;
     dictIterator *di;
@@ -363,7 +363,7 @@ void cluster_rebalance(rctContext *ctx, int type)
 
     while((de = dictNext(di)) != NULL) {
         node = dictGetEntryVal(de);
-           
+
         node_slot_num = node_hold_slot_num(node, NULL, 0);
         
         node_to_reshard = hiarray_push(reshard_nodes);
@@ -467,6 +467,133 @@ void cluster_rebalance(rctContext *ctx, int type)
 
     reshard_nodes->nelem = 0;
     hiarray_destroy(reshard_nodes);
+}
+
+void cluster_rebalance(rctContext *ctx, int type)
+{
+    int i;
+    dict *cluster_nodes = NULL;
+    dictIterator *di;
+    dictEntry *de;
+    struct cluster_node *cluster_node;
+    int total_slot_num = 0, node_slot_num = 0;
+    int final_slot_num_per_node = 0, slot_num_to_move = 0;
+    int cluster_nodes_count = 0;
+    struct hiarray *reshard_nodes = NULL;
+    redis_instance *reshard_node, *reshard_node_from, *reshard_node_to;
+    int reshard_nodes_count = 0;
+    int nodes_num_need_import_slots = 0, node_move_index = 0;
+
+
+    if (ctx->cf != NULL) {
+        reshard_nodes = ctx->cf->nodes;
+    }
+    if (reshard_nodes == NULL) {   
+        goto end;
+    }
+
+    reshard_nodes_count = hiarray_n(reshard_nodes);
+    if (reshard_nodes_count <= 0) {
+        goto end;
+    }
+
+    cluster_nodes = ctx->cc->nodes;
+    if (cluster_nodes == NULL) {   
+        goto end;
+    }
+
+    cluster_nodes_count = dictSize(cluster_nodes);
+    if (cluster_nodes_count <= 0) {
+        goto end;
+    }
+    
+    if (cluster_nodes_count != reshard_nodes_count) {
+        log_stderr("ERROR: nodes count in the conf file is not equal to the cluster.");
+        goto end;
+    }
+
+    for (i = 0; i < reshard_nodes_count; i ++) {
+        reshard_node = hiarray_get(reshard_nodes, i);
+
+        de = dictFind(cluster_nodes, reshard_node->addr);
+        if (de == NULL) {
+            log_stderr("ERROR: node(%s) in the conf file can't find in the cluster.", reshard_node->addr);
+            goto end;
+        }
+        cluster_node = dictGetEntryVal(de);
+
+        reshard_node->name = sdsdup(cluster_node->name);
+        reshard_node->slots_to_import = reshard_node->slots_count - node_hold_slot_num(cluster_node, NULL, 0);
+        if (reshard_node->slots_to_import > 0) {
+            nodes_num_need_import_slots ++;
+        }
+    }
+
+    di = dictGetIterator(cluster_nodes);
+    while((de = dictNext(di)) != NULL) {
+        cluster_node = dictGetEntryVal(de);
+
+        log_debug(LOG_NOTICE, "master: %s, slots_count: %d", cluster_node->addr, node_hold_slot_num(cluster_node, NULL, 0));
+
+    }
+    log_debug(LOG_NOTICE, "");
+    dictReleaseIterator(di);
+
+    hiarray_sort(reshard_nodes, reshard_node_move_num_cmp);
+    rct_redis_instance_array_debug_show(reshard_nodes);
+    
+    node_move_index = reshard_nodes_count - 1;
+    
+    for (i = 0; i < reshard_nodes_count; i ++) {
+        reshard_node_to = hiarray_get(reshard_nodes, i);
+        if (reshard_node_to->slots_to_import <= 0) {
+            break;
+        }
+        
+        if (node_move_index < nodes_num_need_import_slots) {
+            break;
+        }
+        
+        reshard_node_from = hiarray_get(reshard_nodes, node_move_index);
+        
+        slot_num_to_move = reshard_node_from->slots_to_import + reshard_node_to->slots_to_import;
+        if (slot_num_to_move > 0) {
+            slot_num_to_move = 0 - reshard_node_from->slots_to_import;
+            
+            reshard_node_from->slots_to_import += slot_num_to_move;
+            reshard_node_to->slots_to_import -= slot_num_to_move;
+            
+            i --;
+            node_move_index --;
+        } else if(slot_num_to_move == 0) {
+            slot_num_to_move = reshard_node_to->slots_to_import;
+            
+            reshard_node_from->slots_to_import += slot_num_to_move;
+            
+            reshard_node_to->slots_to_import -= slot_num_to_move;
+            node_move_index --;
+        } else {
+            slot_num_to_move = reshard_node_to->slots_to_import;
+            
+            reshard_node_from->slots_to_import += slot_num_to_move;
+            reshard_node_to->slots_to_import -= slot_num_to_move;
+        }
+        log_stdout("--from %s --to %s --slots %d", reshard_node_from->name, reshard_node_to->name, slot_num_to_move);
+    }
+
+    rct_redis_instance_array_debug_show(reshard_nodes);
+
+    for (i = 0; i < reshard_nodes_count; i ++) {
+        reshard_node = hiarray_get(reshard_nodes, i);
+        RCT_ASSERT(reshard_node->slots_to_import == 0);
+    }
+
+end:
+
+    if (ctx->cf == NULL && reshard_nodes != NULL) {
+        reshard_nodes->nelem = 0;
+        hiarray_destroy(reshard_nodes);
+    }
 }
 
 void show_new_nodes_name(rctContext *ctx, int type)
@@ -2403,7 +2530,8 @@ error:
 static int
 redis_cluster_addr_cmp(const void *t1, const void *t2)
 {
-    const cluster_node **s1 = t1, **s2 = t2;
+    const cluster_node **s1 = (const cluster_node **)t1;
+    const cluster_node **s2 = (const cluster_node **)t2;
 
     return sdscmp((*s1)->addr, (*s2)->addr);
 }
@@ -4818,6 +4946,7 @@ int redis_instance_init(redis_instance *node, const char *addr, int role)
         return RCT_ERROR;
     }
 
+    node->name = NULL;
     node->addr = NULL;
     node->host = NULL;
     node->port = 0;
@@ -4827,6 +4956,7 @@ int redis_instance_init(redis_instance *node, const char *addr, int role)
     node->slots = NULL;
     node->slots_count = 0;
     node->slots_weight = 1;
+    node->slots_to_import = 0;
 
     node->addr = sdsnew(addr);
     
@@ -4911,6 +5041,11 @@ void redis_instance_deinit(redis_instance *node)
         return;
     }
 
+    if(node->name){
+        sdsfree(node->name);
+        node->name = NULL;
+    }
+
     if(node->addr){
         sdsfree(node->addr);
         node->addr = NULL;
@@ -4937,6 +5072,7 @@ void redis_instance_deinit(redis_instance *node)
     }
 
     node->slots_count = 0;
+    node->slots_to_import = 0;
 }
 
 void redis_instance_destroy(redis_instance *node)
@@ -4948,6 +5084,48 @@ void redis_instance_destroy(redis_instance *node)
     redis_instance_deinit(node);
 
     rct_free(node);
+}
+
+void rct_redis_instance_array_debug_show(struct hiarray *nodes)
+{
+#ifdef RCT_DEBUG_LOG
+
+    int i, j;
+    for (i = 0; i < hiarray_n(nodes); i++) {
+        redis_instance *master;
+        sds slots_region_str = sdsempty();
+
+        master = hiarray_get(nodes, i);
+        if (master->slots_count > 0) {
+            slots_region_str = sdscat(slots_region_str, "{");
+            for (j = 0; j < hiarray_n(master->slots); j ++) {
+                slots_region *sr = hiarray_get(master->slots, j);
+                slots_region_str = sdscatfmt(slots_region_str, "[%u, %u],", sr->start, sr->end);
+            }
+            sdsrange(slots_region_str, 0, sdslen(slots_region_str)-2);
+            slots_region_str = sdscat(slots_region_str, "}");
+        }
+
+        
+        log_stdout("master: %s:%d, slots_weight: %d, slots_count: %d, slots_region: %s, slots_to_import: %d", 
+            master->host, master->port, master->slots_weight, master->slots_count, 
+            sdslen(slots_region_str) == 0?"NULL":slots_region_str, master->slots_to_import);
+
+        if (master->slaves) {
+            listIter *it = listGetIterator(master->slaves, AL_START_HEAD);
+            listNode *ln;
+            redis_instance *slave;
+            while((ln = listNext(it)) != NULL){
+                slave = listNodeValue(ln);
+                log_stdout(" slave: %s:%d", slave->host, slave->port);
+            }
+            
+            listReleaseIterator(it);
+        }
+    }
+    log_stdout("");
+
+#endif
 }
 
 redisContext *cxt_get_by_redis_instance(redis_instance *node)

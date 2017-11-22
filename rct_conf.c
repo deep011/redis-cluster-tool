@@ -79,14 +79,16 @@ static int assign_master_slots(struct hiarray *nodes)
 
     RCT_ASSERT (slots_remainder >= 0);
 
-    i = 0;
-    while (slots_remainder-- > 0) {
+    i = -1;
+    while (slots_remainder > 0) {
+        if (++i >= master_count) i = 0;
         master = hiarray_get(nodes, i);
-        if (master->slots_weight <= 0) continue;
+        if (master->slots_weight <= 0) {
+            continue;
+        }
 
         master->slots_count ++;
-
-        if (++i >= master_count) i = 0;
+        slots_remainder--;
     }
 
     slots_begin = 0;
@@ -512,7 +514,7 @@ sds generate_conf_info_string(struct hiarray *nodes)
     
     if (nodes == NULL) {
         log_stderr("ERROR: nodes is NULL.");
-        return;
+        return NULL;
     }
 
     for (i = 0; i < hiarray_n(nodes); i++) {
@@ -581,11 +583,7 @@ int dump_conf_file(char *filename, sds info_str)
 
 void rct_conf_debug_show(rct_conf *cf)
 {
-    int i, j;
-    int show = 0;
-
-    if (show == 0)
-        return;
+#ifdef RCT_DEBUG_LOG
     
     if (cf == NULL) {
         log_stderr("ERROR: conf is NULL.");
@@ -598,36 +596,8 @@ void rct_conf_debug_show(rct_conf *cf)
     log_stdout("config every_node_maxmemory: %lld", cf->every_node_maxmemory);
     log_stdout("config every_node_maxclients: %d", cf->every_node_maxclients);
     
-    for (i = 0; i < hiarray_n(cf->nodes); i++) {
-        redis_instance *master;
-        sds slots_region_str = sdsempty();
+    log_stdout("config nodes:");
+    rct_redis_instance_array_debug_show(cf->nodes);
 
-        master = hiarray_get(cf->nodes, i);
-        if (master->slots_count > 0) {
-            slots_region_str = sdscat(slots_region_str, "{");
-            for (j = 0; j < hiarray_n(master->slots); j ++) {
-                slots_region *sr = hiarray_get(master->slots, j);
-                slots_region_str = sdscatfmt(slots_region_str, "[%u, %u],", sr->start, sr->end);
-            }
-            sdsrange(slots_region_str, 0, sdslen(slots_region_str)-2);
-            slots_region_str = sdscat(slots_region_str, "}");
-        }
-
-        
-        log_stdout("config master: %s:%d, slots_weight: %d, slots_count: %d, slots_region: %s", 
-            master->host, master->port, master->slots_weight, master->slots_count, 
-            sdslen(slots_region_str) == 0?"NULL":slots_region_str);
-
-        if (master->slaves) {
-            listIter *it = listGetIterator(master->slaves, AL_START_HEAD);
-            listNode *ln;
-            redis_instance *slave;
-            while((ln = listNext(it)) != NULL){
-                slave = listNodeValue(ln);
-                log_stdout("config slave: %s:%d", slave->host, slave->port);
-            }
-            
-            listReleaseIterator(it);
-        }
-    }
+#endif
 }
