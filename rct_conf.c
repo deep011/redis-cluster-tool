@@ -517,6 +517,8 @@ sds generate_conf_info_string(struct hiarray *nodes)
         return NULL;
     }
 
+    hiarray_sort(nodes, redis_instance_array_addr_cmp);
+
     for (i = 0; i < hiarray_n(nodes); i++) {
         redis_instance *master;
 
@@ -559,7 +561,7 @@ int dump_conf_file(char *filename, sds info_str)
         sdsfree(filename_bak);
     }
 
-    fd = open(filename, O_WRONLY|O_CREAT|O_TRUNC, S_IRUSR|S_IWUSR|S_IRGRP|S_IROTH);
+    fd = open(filename, O_WRONLY|O_CREAT|O_TRUNC, 0644);
     if (fd < 0) {
         log_stderr("ERROR: open conf file %s failed: %s", filename, strerror(errno));
         return RCT_ERROR;

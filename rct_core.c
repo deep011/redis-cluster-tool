@@ -4773,7 +4773,6 @@ int async_reply_dump_conf_file(async_command *acmd)
         goto error;
     }
 
-    /* step 1: cluster forget all nodes */
     di = dictGetIterator(cluster_nodes);
     while((de = dictNext(di)) != NULL) {
         cluster_master = dictGetEntryVal(de);
@@ -4811,7 +4810,7 @@ int async_reply_dump_conf_file(async_command *acmd)
 
     conf_info_string = generate_conf_info_string(nodes);
     if (hiarray_n(&ctx->args) > 0) {
-        filename = hiarray_get(&ctx->args, 0);
+        filename = *(sds *)hiarray_get(&ctx->args, 0);
     } else if (ctx->cf != NULL) {
         filename = ctx->cf->fname;
     }
@@ -5147,6 +5146,14 @@ redisContext *cxt_get_by_redis_instance(redis_instance *node)
     }
 
     return redisConnect(node->host, node->port);
+}
+
+int redis_instance_array_addr_cmp(const void *t1, const void *t2)
+{
+    const redis_instance *s1 = (const redis_instance *)t1;
+    const redis_instance *s2 = (const redis_instance *)t2;
+
+    return sdscmp(s1->addr, s2->addr);
 }
 
 static void *event_run(void *args)

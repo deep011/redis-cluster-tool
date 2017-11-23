@@ -218,5 +218,8 @@ void redis_instance_destroy(redis_instance *node);
 void rct_redis_instance_array_debug_show(struct hiarray *nodes);
 redisContext *cxt_get_by_redis_instance(redis_instance *node);
 
+int redis_instance_array_addr_cmp(const void *t1, const void *t2);
+
+
 #endif
 
