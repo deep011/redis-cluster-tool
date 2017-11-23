@@ -270,7 +270,7 @@ static int rct_parse_config_from_file(rct_conf *cf, FILE *fh)
             str = sdscat(str, line);
         }
         
-        sdstrim(str, " \n");
+        sdstrim(str, " \r\n");
 
         if (sdslen(str) == 0) continue;
 
@@ -372,8 +372,6 @@ static int rct_parse_config_from_file(rct_conf *cf, FILE *fh)
 
             log_debug(LOG_DEBUG, "%s %s", key_value[0], key_value[1]);
 
-            
-
             //This is master
             if (!sds_compare_to_string(key_value[0], "master", -1)) {
                 last_master = hiarray_push(cf->nodes);
@@ -401,7 +399,7 @@ static int rct_parse_config_from_file(rct_conf *cf, FILE *fh)
                 
                 slots_weight = rct_atoi(key_value[1]);
                 if (slots_weight < 0) {
-                    log_error("ERROR: master slots_weight must be bigger then zero in the config file.");
+                    log_error("ERROR: master slots_weight can not be minus number in the config file.");
                     goto error;
                 }
             } else {
