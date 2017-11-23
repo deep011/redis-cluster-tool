@@ -28,7 +28,7 @@ struct RCTCommand rctCommandTable[] = {
     {RCT_CMD_NEW_NODES_NAME, "Show the new nodes name that not covered slots.", 
         show_new_nodes_name, -1, 0, 0, CMD_FLAG_NEED_SYNCHRONOUS},
     {RCT_CMD_CLUSTER_REBALANCE, "Show the cluster how to rebalance.", 
-        cluster_rebalance, -1, 0, 0, CMD_FLAG_NEED_SYNCHRONOUS},
+        cluster_rebalance, -1, 0, 1, CMD_FLAG_NEED_SYNCHRONOUS},
     {RCT_CMD_FLUSHALL, "Flush all the cluster.", 
         cluster_flushall, -1, 0, 0, CMD_FLAG_NEED_CONFIRM},
     {RCT_CMD_CLUSTER_CONFIG_GET, "Get config from every node in the cluster and check consistency.", 

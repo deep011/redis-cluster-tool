@@ -483,18 +483,26 @@ void cluster_rebalance(rctContext *ctx, int type)
     redis_instance *reshard_node, *reshard_node_from, *reshard_node_to;
     int reshard_nodes_count = 0;
     int nodes_num_need_import_slots = 0, node_move_index = 0;
+    sds arg;
+    size_t args_valid_count = 0;
+    int use_redistrib = 1;
 
+    for (i = 0; i < hiarray_n(&ctx->args); i ++) {
+        char * arg_in;
+        size_t arg_len_in;
+        arg = *(sds *)hiarray_get(&ctx->args, i);
 
-    if (ctx->cf != NULL) {
-        reshard_nodes = ctx->cf->nodes;
+        arg_in = "use-redis-trib";arg_len_in = strlen(arg_in);
+        if (sdslen(arg) == arg_len_in && memcmp(arg, arg_in, arg_len_in) == 0) {
+            use_redistrib = 1;
+            args_valid_count ++;
+            continue;
+        }
     }
-    if (reshard_nodes == NULL) {   
-        goto end;
-    }
 
-    reshard_nodes_count = hiarray_n(reshard_nodes);
-    if (reshard_nodes_count <= 0) {
-        goto end;
+    if (args_valid_count != hiarray_n(&ctx->args)) {
+        log_stderr("ERROR: some arguments is wrong for 'rebalance' command.");
+        return;
     }
 
     cluster_nodes = ctx->cc->nodes;
@@ -504,6 +512,24 @@ void cluster_rebalance(rctContext *ctx, int type)
 
     cluster_nodes_count = dictSize(cluster_nodes);
     if (cluster_nodes_count <= 0) {
+        goto end;
+    }
+
+    if (ctx->cf != NULL) {
+        reshard_nodes = ctx->cf->nodes;
+    } else {
+        reshard_nodes = redis_instance_array_create_from_cluster(cluster_nodes);
+        if (reshard_nodes == NULL) {   
+            goto end;
+        }
+        redis_instance_array_assign_master_slots(reshard_nodes);
+    }
+    if (reshard_nodes == NULL) {   
+        goto end;
+    }
+
+    reshard_nodes_count = hiarray_n(reshard_nodes);
+    if (reshard_nodes_count <= 0) {
         goto end;
     }
     
@@ -4738,16 +4764,10 @@ error:
 int async_reply_dump_conf_file(async_command *acmd)
 {
     int ret;
-    hilist *cluster_slaves;
-    listIter *li = NULL;
-    listNode *ln;
-    dictIterator *di = NULL;
-    dictEntry *de;
     dict *cluster_nodes;
     rctContext *ctx = acmd->ctx;
-    struct cluster_node *cluster_master, *cluster_slave;
     struct hiarray *nodes = NULL;
-    struct redis_instance *master, *slave;
+    struct redis_instance *master;
     sds command = NULL;
     sds conf_info_string = NULL;
     sds filename = NULL;
@@ -4767,46 +4787,10 @@ int async_reply_dump_conf_file(async_command *acmd)
 
     command = sdsnew("");
 
-    nodes = hiarray_create(dictSize(cluster_nodes), sizeof(struct redis_instance));
+    nodes = redis_instance_array_create_from_cluster(cluster_nodes);
     if (nodes == NULL) {
-        log_stderr("ERROR: out of memory.");
         goto error;
     }
-
-    di = dictGetIterator(cluster_nodes);
-    while((de = dictNext(di)) != NULL) {
-        cluster_master = dictGetEntryVal(de);
-
-        master = hiarray_push(nodes);
-        if (master == NULL) {
-            log_stderr("ERROR: out of memory.");
-            goto error;
-        }
-        ret = redis_instance_init(master, cluster_master->addr, RCT_REDIS_ROLE_MASTER);
-        if (ret != RCT_OK) {
-            goto error;
-        }
-        master->slots_count = node_hold_slot_num(cluster_master, NULL, 0);
-        
-        cluster_slaves = cluster_master->slaves;
-        if (cluster_slaves == NULL) {
-            continue;
-        }
-        
-        li = listGetIterator(cluster_slaves, AL_START_HEAD);
-        while ((ln = listNext(li)) != NULL) {
-            cluster_slave = listNodeValue(ln);
-            slave = redis_instance_create(cluster_slave->addr, RCT_REDIS_ROLE_SLAVE);
-            if (slave == NULL) {
-                goto error;
-            }
-            listAddNodeTail(master->slaves, slave);
-        }
-
-        listReleaseIterator(li);
-    }
-    dictReleaseIterator(di);
-    di = NULL;
 
     conf_info_string = generate_conf_info_string(nodes);
     if (hiarray_n(&ctx->args) > 0) {
@@ -4831,14 +4815,6 @@ int async_reply_dump_conf_file(async_command *acmd)
     return RCT_AE_STOP;
 
 error:
-
-    if(di != NULL){
-        dictReleaseIterator(di);
-    }
-
-    if(li != NULL){
-        listReleaseIterator(li);
-    }
 
     if(command != NULL){
         sdsfree(command);
@@ -5147,6 +5123,139 @@ redisContext *cxt_get_by_redis_instance(redis_instance *node)
 
     return redisConnect(node->host, node->port);
 }
+
+int redis_instance_array_assign_master_slots(struct hiarray *nodes)
+{
+    int i;
+    float node_slots_proportion;
+    int slots_begin, slots_step, slots_remainder = REDIS_CLUSTER_SLOTS;
+    int total_slots_weight = 0;
+    int master_count;
+    redis_instance *master;
+
+    master_count = hiarray_n(nodes);
+    for (i = 0; i < master_count; i++) {
+        master = hiarray_get(nodes, i);
+        total_slots_weight += master->slots_weight;
+    }
+
+    for (i = 0; i < master_count; i ++) {
+        master = hiarray_get(nodes, i);
+        if (master->slots_weight <= 0) continue;
+        
+        node_slots_proportion = (float)master->slots_weight/(float)total_slots_weight;
+        master->slots_count = floor(node_slots_proportion*REDIS_CLUSTER_SLOTS);
+        if (master->slots_count <= 0) master->slots_count = 1;
+        slots_remainder -= master->slots_count;
+    }
+
+    RCT_ASSERT (slots_remainder >= 0);
+
+    i = -1;
+    while (slots_remainder > 0) {
+        if (++i >= master_count) i = 0;
+        master = hiarray_get(nodes, i);
+        if (master->slots_weight <= 0) {
+            continue;
+        }
+
+        master->slots_count ++;
+        slots_remainder--;
+    }
+
+    slots_begin = 0;
+    for (i = 0; i < master_count; i ++) {
+        slots_region *sr;
+        
+        master = hiarray_get(nodes, i);
+        if (master->slots_weight <= 0) continue;
+
+        sr = hiarray_push(master->slots);
+        sr->start = slots_begin;
+        sr->end = sr->start + master->slots_count - 1;
+        
+        slots_begin += master->slots_count;
+    }
+    
+    return RCT_OK;
+}
+
+struct hiarray *redis_instance_array_create_from_cluster(dict *cluster_nodes)
+{
+    int ret;
+    listIter *li = NULL;
+    listNode *ln;
+    dictIterator *di = NULL;
+    dictEntry *de;
+    hilist *cluster_slaves;
+    struct cluster_node *cluster_master, *cluster_slave;
+    struct hiarray *nodes = NULL;
+    struct redis_instance *master, *slave;
+    
+    nodes = hiarray_create(dictSize(cluster_nodes), sizeof(struct redis_instance));
+    if (nodes == NULL) {
+        log_stderr("ERROR: out of memory.");
+        goto error;
+    }
+
+    di = dictGetIterator(cluster_nodes);
+    while((de = dictNext(di)) != NULL) {
+        cluster_master = dictGetEntryVal(de);
+
+        master = hiarray_push(nodes);
+        if (master == NULL) {
+            log_stderr("ERROR: out of memory.");
+            goto error;
+        }
+        ret = redis_instance_init(master, cluster_master->addr, RCT_REDIS_ROLE_MASTER);
+        if (ret != RCT_OK) {
+            goto error;
+        }
+        master->slots_count = node_hold_slot_num(cluster_master, NULL, 0);
+        
+        cluster_slaves = cluster_master->slaves;
+        if (cluster_slaves == NULL) {
+            continue;
+        }
+        
+        li = listGetIterator(cluster_slaves, AL_START_HEAD);
+        while ((ln = listNext(li)) != NULL) {
+            cluster_slave = listNodeValue(ln);
+            slave = redis_instance_create(cluster_slave->addr, RCT_REDIS_ROLE_SLAVE);
+            if (slave == NULL) {
+                goto error;
+            }
+            listAddNodeTail(master->slaves, slave);
+        }
+
+        listReleaseIterator(li);
+    }
+    dictReleaseIterator(di);
+    di = NULL;
+
+    return nodes;
+
+error:
+
+    if(di != NULL){
+        dictReleaseIterator(di);
+    }
+
+    if(li != NULL){
+        listReleaseIterator(li);
+    }
+
+    if (nodes != NULL) {
+        while (hiarray_n(nodes) > 0) {
+            redis_instance *master = hiarray_pop(nodes);
+            redis_instance_deinit(master);
+        }
+        hiarray_destroy(nodes);
+    }
+
+    return NULL;
+}
+
 
 int redis_instance_array_addr_cmp(const void *t1, const void *t2)
 {

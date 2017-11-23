@@ -52,62 +52,6 @@ static void conf_deinit(rct_conf *cf)
     }
 }
 
-static int assign_master_slots(struct hiarray *nodes)
-{
-    int i;
-    float node_slots_proportion;
-    int slots_begin, slots_step, slots_remainder = REDIS_CLUSTER_SLOTS;
-    int total_slots_weight = 0;
-    int master_count;
-    redis_instance *master;
-
-    master_count = hiarray_n(nodes);
-    for (i = 0; i < master_count; i++) {
-        master = hiarray_get(nodes, i);
-        total_slots_weight += master->slots_weight;
-    }
-
-    for (i = 0; i < master_count; i ++) {
-        master = hiarray_get(nodes, i);
-        if (master->slots_weight <= 0) continue;
-        
-        node_slots_proportion = (float)master->slots_weight/(float)total_slots_weight;
-        master->slots_count = floor(node_slots_proportion*REDIS_CLUSTER_SLOTS);
-        if (master->slots_count <= 0) master->slots_count = 1;
-        slots_remainder -= master->slots_count;
-    }
-
-    RCT_ASSERT (slots_remainder >= 0);
-
-    i = -1;
-    while (slots_remainder > 0) {
-        if (++i >= master_count) i = 0;
-        master = hiarray_get(nodes, i);
-        if (master->slots_weight <= 0) {
-            continue;
-        }
-
-        master->slots_count ++;
-        slots_remainder--;
-    }
-
-    slots_begin = 0;
-    for (i = 0; i < master_count; i ++) {
-        slots_region *sr;
-        
-        master = hiarray_get(nodes, i);
-        if (master->slots_weight <= 0) continue;
-
-        sr = hiarray_push(master->slots);
-        sr->start = slots_begin;
-        sr->end = sr->start + master->slots_count - 1;
-        
-        slots_begin += master->slots_count;
-    }
-    
-    return RCT_OK;
-}
-
 static int rct_parse_config_from_string(rct_conf *cf, struct hiarray *configs)
 {
     int i, k;
@@ -176,7 +120,7 @@ static int rct_parse_config_from_string(rct_conf *cf, struct hiarray *configs)
 
     RCT_ASSERT(master_count == hiarray_n(nodes));
 
-    assign_master_slots(nodes);
+    redis_instance_array_assign_master_slots(nodes);
 
     cf->nodes = nodes;
     
@@ -418,7 +362,7 @@ static int rct_parse_config_from_file(rct_conf *cf, FILE *fh)
     if (fields != NULL) sdsfreesplitres(fields, fields_count);
     if (key_value!= NULL) sdsfreesplitres(key_value, key_value_count);
 
-    assign_master_slots(cf->nodes);
+    redis_instance_array_assign_master_slots(cf->nodes);
     
     return RCT_OK;
 
@@ -529,7 +473,7 @@ sds generate_conf_info_string(struct hiarray *nodes)
             redis_instance *slave;
             while((ln = listNext(it)) != NULL){
                 slave = listNodeValue(ln);
-                info_str = sdscatfmt(info_str,"slave=%s:%i\r\n", slave->host, slave->port);
+                info_str = sdscatfmt(info_str," slave=%s:%i\r\n", slave->host, slave->port);
             }
             
             listReleaseIterator(it);
